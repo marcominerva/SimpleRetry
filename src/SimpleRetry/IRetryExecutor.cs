@@ -1,4 +1,4 @@
-﻿namespace SimpleRetryTools;
+﻿namespace SimpleRetry;
 
 /// <summary>
 /// Defines the configuration exposed by a pipeline executor.

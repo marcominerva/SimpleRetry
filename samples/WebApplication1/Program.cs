@@ -1,4 +1,4 @@
-using SimpleRetryTools;
+using SimpleRetry;
 
 var builder = WebApplication.CreateBuilder(args);
 

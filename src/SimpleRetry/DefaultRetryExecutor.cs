@@ -1,6 +1,6 @@
 ﻿using Microsoft.Extensions.Logging;
 
-namespace SimpleRetryTools;
+namespace SimpleRetry;
 
 /// <summary>
 /// Provides the default pipeline executor configuration.
@@ -68,8 +68,7 @@ internal class DefaultRetryExecutor(RetryPolicyOptions options, IServiceProvider
     }
 
     private Task OnRetryAsync(int attempt, TimeSpan retryDelay, Exception exception)
-        => options.OnRetry?.Invoke(new(attempt, options.MaxRetryCount, retryDelay, exception, serviceProvider, loggerFactory))
-            ?? Task.CompletedTask;
+        => options.OnRetry?.Invoke(new(attempt, options.MaxRetryCount, retryDelay, exception, serviceProvider, loggerFactory)) ?? Task.CompletedTask;
 
     private TimeSpan GetRetryDelay(int attempt) => options.BackoffType switch
     {

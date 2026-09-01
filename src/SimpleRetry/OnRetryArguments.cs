@@ -1,6 +1,6 @@
 using Microsoft.Extensions.Logging;
 
-namespace SimpleRetryTools;
+namespace SimpleRetry;
 
 /// <summary>
 /// Provides contextual information for an asynchronous retry callback.
