@@ -1,4 +1,4 @@
-﻿namespace SimpleRetryTools;
+﻿namespace SimpleRetry;
 
 /// <summary>
 /// Represents the configuration for retry operations.

@@ -1,5 +1,5 @@
 using Microsoft.Extensions.Logging.Abstractions;
-using SimpleRetryTools;
+using SimpleRetry;
 
 namespace SimpleRetry.UnitTests;
 

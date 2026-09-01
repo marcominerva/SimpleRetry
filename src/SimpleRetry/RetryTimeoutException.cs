@@ -1,4 +1,4 @@
-namespace SimpleRetryTools;
+namespace SimpleRetry;
 
 /// <summary>
 /// Represents a timeout produced by the retry executor when an operation exceeds the configured request timeout.

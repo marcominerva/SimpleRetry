@@ -1,10 +1,7 @@
 ﻿using Microsoft.Extensions.Logging;
 
-namespace SimpleRetryTools;
+namespace SimpleRetry;
 
-/// <summary>
-/// Provides the default pipeline executor configuration.
-/// </summary>
 internal class DefaultRetryExecutor(RetryPolicyOptions options, IServiceProvider serviceProvider, ILoggerFactory loggerFactory) : IRetryExecutor
 {
     /// <inheritdoc />

@@ -1,4 +1,4 @@
-namespace SimpleRetryTools;
+namespace SimpleRetry;
 
 /// <summary>
 /// Specifies how the delay between retry attempts is calculated.

@@ -3,10 +3,10 @@ using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 
-namespace SimpleRetryTools;
+namespace SimpleRetry;
 
 /// <summary>
-/// Provides extension methods for registering SimpleRetryTools services.
+/// Provides extension methods for registering SimpleRetry services.
 /// </summary>
 public static class ServiceCollectionExtensions
 {
