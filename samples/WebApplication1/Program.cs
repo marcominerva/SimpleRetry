@@ -25,7 +25,7 @@ builder.Services.AddSimpleRetry("TestService", options =>
     options.RetryDelay = TimeSpan.FromSeconds(1);
 });
 
-builder.Services.AddHttpClient("test").AddStandardResilienceHandler();
+builder.Services.AddHttpClient("test").AddHttpSimpleRetry();
 
 var app = builder.Build();
 

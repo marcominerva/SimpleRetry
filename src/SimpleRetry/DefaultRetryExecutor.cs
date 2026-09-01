@@ -68,7 +68,7 @@ internal class DefaultRetryExecutor(RetryPolicyOptions options, IServiceProvider
     {
         var task = operation(cancellationToken);
 
-        if (options.AttemptTimeout is not { } attemptTimeout)
+        if (options.AttemptTimeout is not TimeSpan attemptTimeout)
         {
             await task.ConfigureAwait(false);
             return;
@@ -88,7 +88,7 @@ internal class DefaultRetryExecutor(RetryPolicyOptions options, IServiceProvider
     {
         var task = operation(cancellationToken);
 
-        if (options.AttemptTimeout is not { } attemptTimeout)
+        if (options.AttemptTimeout is not TimeSpan attemptTimeout)
         {
             return await task.ConfigureAwait(false);
         }
