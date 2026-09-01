@@ -26,8 +26,8 @@ public static class ServiceCollectionExtensions
             var options = new RetryPolicyOptions();
             configure(options);
 
-            AddPipelineExecutor(services);
             services.AddKeyedSingleton(serviceKey, options);
+            AddPipelineExecutor(services);
 
             return services;
         }
@@ -43,13 +43,14 @@ public static class ServiceCollectionExtensions
             ArgumentNullException.ThrowIfNull(services);
             ArgumentNullException.ThrowIfNull(configure);
 
-            AddPipelineExecutor(services);
             services.AddKeyedSingleton(serviceKey, (services, _) =>
             {
                 var options = new RetryPolicyOptions();
                 configure(services, options);
                 return options;
             });
+
+            AddPipelineExecutor(services);
 
             return services;
         }
