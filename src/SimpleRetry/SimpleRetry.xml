@@ -1,0 +1,175 @@
+<?xml version="1.0"?>
+<doc>
+    <assembly>
+        <name>SimpleRetry</name>
+    </assembly>
+    <members>
+        <member name="T:SimpleRetryTools.BackoffType">
+            <summary>
+            Specifies how the delay between retry attempts is calculated.
+            </summary>
+        </member>
+        <member name="F:SimpleRetryTools.BackoffType.Constant">
+            <summary>
+            Uses the configured retry delay for every retry attempt.
+            </summary>
+        </member>
+        <member name="F:SimpleRetryTools.BackoffType.Linear">
+            <summary>
+            Increases the configured retry delay linearly based on the current retry attempt.
+            </summary>
+        </member>
+        <member name="F:SimpleRetryTools.BackoffType.Exponential">
+            <summary>
+            Increases the configured retry delay exponentially based on the current retry attempt.
+            </summary>
+        </member>
+        <member name="T:SimpleRetryTools.DefaultRetryExecutor">
+            <summary>
+            Provides the default pipeline executor configuration.
+            </summary>
+        </member>
+        <member name="M:SimpleRetryTools.DefaultRetryExecutor.#ctor(SimpleRetryTools.RetryPolicyOptions,System.IServiceProvider,Microsoft.Extensions.Logging.ILoggerFactory)">
+            <summary>
+            Provides the default pipeline executor configuration.
+            </summary>
+        </member>
+        <member name="M:SimpleRetryTools.DefaultRetryExecutor.ExecuteAsync(System.Func{System.Threading.CancellationToken,System.Threading.Tasks.Task},System.Threading.CancellationToken)">
+            <inheritdoc />
+        </member>
+        <member name="M:SimpleRetryTools.DefaultRetryExecutor.ExecuteAsync``1(System.Func{System.Threading.CancellationToken,System.Threading.Tasks.Task{``0}},System.Threading.CancellationToken)">
+            <inheritdoc />
+        </member>
+        <member name="T:SimpleRetryTools.IRetryExecutor">
+            <summary>
+            Defines the configuration exposed by a pipeline executor.
+            </summary>
+        </member>
+        <member name="M:SimpleRetryTools.IRetryExecutor.ExecuteAsync(System.Func{System.Threading.CancellationToken,System.Threading.Tasks.Task},System.Threading.CancellationToken)">
+            <summary>
+            Executes the specified asynchronous operation using the configured retry policy.
+            </summary>
+            <param name="operation">The asynchronous operation to execute.</param>
+            <param name="cancellationToken">The token used to cancel the operation or retry delay.</param>
+            <returns>A task that represents the asynchronous execution.</returns>
+        </member>
+        <member name="M:SimpleRetryTools.IRetryExecutor.ExecuteAsync``1(System.Func{System.Threading.CancellationToken,System.Threading.Tasks.Task{``0}},System.Threading.CancellationToken)">
+            <summary>
+            Executes the specified asynchronous operation using the configured retry policy and returns its result.
+            </summary>
+            <typeparam name="T">The type of the operation result.</typeparam>
+            <param name="operation">The asynchronous operation to execute.</param>
+            <param name="cancellationToken">The token used to cancel the operation or retry delay.</param>
+            <returns>A task that represents the asynchronous execution and contains the operation result.</returns>
+        </member>
+        <member name="T:SimpleRetryTools.OnRetryArguments">
+            <summary>
+            Provides contextual information for an asynchronous retry callback.
+            </summary>
+            <param name="attemptNumber">The current retry attempt number.</param>
+            <param name="maxRetryCount">The maximum number of retry attempts configured for the operation.</param>
+            <param name="retryDelay">The delay before the next retry attempt.</param>
+            <param name="exception">The exception that caused the retry.</param>
+            <param name="serviceProvider">The service provider associated with the retry executor.</param>
+            <param name="loggerFactory">The logger factory available to retry callbacks.</param>
+        </member>
+        <member name="M:SimpleRetryTools.OnRetryArguments.#ctor(System.Int32,System.Int32,System.TimeSpan,System.Exception,System.IServiceProvider,Microsoft.Extensions.Logging.ILoggerFactory)">
+            <summary>
+            Provides contextual information for an asynchronous retry callback.
+            </summary>
+            <param name="attemptNumber">The current retry attempt number.</param>
+            <param name="maxRetryCount">The maximum number of retry attempts configured for the operation.</param>
+            <param name="retryDelay">The delay before the next retry attempt.</param>
+            <param name="exception">The exception that caused the retry.</param>
+            <param name="serviceProvider">The service provider associated with the retry executor.</param>
+            <param name="loggerFactory">The logger factory available to retry callbacks.</param>
+        </member>
+        <member name="P:SimpleRetryTools.OnRetryArguments.AttemptNumber">
+            <summary>
+            Gets the current retry attempt number.
+            </summary>
+        </member>
+        <member name="P:SimpleRetryTools.OnRetryArguments.MaxRetryCount">
+            <summary>
+            Gets the maximum number of retry attempts configured for the operation.
+            </summary>
+        </member>
+        <member name="P:SimpleRetryTools.OnRetryArguments.RetryDelay">
+            <summary>
+            Gets the delay before the next retry attempt.
+            </summary>
+        </member>
+        <member name="P:SimpleRetryTools.OnRetryArguments.Exception">
+            <summary>
+            Gets the exception that caused the retry.
+            </summary>
+        </member>
+        <member name="P:SimpleRetryTools.OnRetryArguments.ServiceProvider">
+            <summary>
+            Gets the service provider associated with the retry executor.
+            </summary>
+        </member>
+        <member name="P:SimpleRetryTools.OnRetryArguments.LoggerFactory">
+            <summary>
+            Gets the logger factory available to retry callbacks.
+            </summary>
+        </member>
+        <member name="T:SimpleRetryTools.RetryPolicyOptions">
+            <summary>
+            Represents the configuration for retry operations.
+            </summary>
+        </member>
+        <member name="P:SimpleRetryTools.RetryPolicyOptions.MaxRetryCount">
+            <summary>
+            Gets or sets the maximum number of retry attempts.
+            </summary>
+        </member>
+        <member name="P:SimpleRetryTools.RetryPolicyOptions.RetryDelay">
+            <summary>
+            Gets or sets the delay between retry attempts.
+            </summary>
+        </member>
+        <member name="P:SimpleRetryTools.RetryPolicyOptions.BackoffType">
+            <summary>
+            Gets or sets the strategy used to calculate the delay between retry attempts.
+            </summary>
+        </member>
+        <member name="P:SimpleRetryTools.RetryPolicyOptions.ShouldHandle">
+            <summary>
+            Gets or sets the predicate used to determine whether an exception should be handled by the retry policy.
+            </summary>
+        </member>
+        <member name="P:SimpleRetryTools.RetryPolicyOptions.OnRetry">
+            <summary>
+            Gets or sets the asynchronous callback invoked before each retry attempt.
+            </summary>
+        </member>
+        <member name="T:SimpleRetryTools.ServiceCollectionExtensions">
+            <summary>
+            Provides extension methods for registering SimpleRetryTools services.
+            </summary>
+        </member>
+        <member name="M:SimpleRetryTools.ServiceCollectionExtensions.AddSimpleRetry(Microsoft.Extensions.DependencyInjection.IServiceCollection,System.Object,System.Action{SimpleRetryTools.RetryPolicyOptions})">
+            <inheritdoc cref="M:SimpleRetryTools.ServiceCollectionExtensions.&lt;G&gt;$7B30185E57B8298C6754F16C0BCF4773.AddSimpleRetry(System.Object,System.Action{SimpleRetryTools.RetryPolicyOptions})"/>
+        </member>
+        <member name="M:SimpleRetryTools.ServiceCollectionExtensions.AddSimpleRetry(Microsoft.Extensions.DependencyInjection.IServiceCollection,System.Object,System.Action{System.IServiceProvider,SimpleRetryTools.RetryPolicyOptions})">
+            <inheritdoc cref="M:SimpleRetryTools.ServiceCollectionExtensions.&lt;G&gt;$7B30185E57B8298C6754F16C0BCF4773.AddSimpleRetry(System.Object,System.Action{System.IServiceProvider,SimpleRetryTools.RetryPolicyOptions})"/>
+        </member>
+        <member name="M:SimpleRetryTools.ServiceCollectionExtensions.&lt;G&gt;$7B30185E57B8298C6754F16C0BCF4773.AddSimpleRetry(System.Object,System.Action{SimpleRetryTools.RetryPolicyOptions})">
+            <summary>
+            Registers a keyed retry policy using configuration that does not require a service provider.
+            </summary>
+            <param name="serviceKey">The key used to identify the registered retry policy.</param>
+            <param name="configure">The callback used to configure the retry policy.</param>
+            <returns>The service collection for chaining additional registrations.</returns>
+        </member>
+        <member name="M:SimpleRetryTools.ServiceCollectionExtensions.&lt;G&gt;$7B30185E57B8298C6754F16C0BCF4773.AddSimpleRetry(System.Object,System.Action{System.IServiceProvider,SimpleRetryTools.RetryPolicyOptions})">
+            <summary>
+            Registers a keyed retry policy using configuration that can resolve services from the provider.
+            </summary>
+            <param name="serviceKey">The key used to identify the registered retry policy.</param>
+            <param name="configure">The callback used to configure the retry policy.</param>
+            <returns>The service collection for chaining additional registrations.</returns>
+        </member>
+    </members>
+</doc>
