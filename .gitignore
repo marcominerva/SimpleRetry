@@ -362,3 +362,4 @@ MigrationBackup/
 # Fody - auto-generated XML schema
 FodyWeavers.xsd
 /SimpleRetryTools/SimpleRetry.xml
+/src/SimpleRetry/SimpleRetry.xml
