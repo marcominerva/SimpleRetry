@@ -18,7 +18,8 @@
         <RepositoryType>git</RepositoryType>
         <RepositoryUrl>https://github.com/marcominerva/SimpleRetry.git</RepositoryUrl>
         <RepositoryBranch>master</RepositoryBranch>
-        <PackageReadmeFile>README.md</PackageReadmeFile></PropertyGroup>
+        <PackageReadmeFile>README.md</PackageReadmeFile>
+    </PropertyGroup>
 
     <ItemGroup>
         <None Remove="SimpleRetry.xml" />
@@ -35,6 +36,10 @@
             <PackagePath></PackagePath>
         </None>
         <None Include="..\..\README.md" Pack="true" PackagePath="\" />
+    </ItemGroup>
+
+    <ItemGroup>
+      <InternalsVisibleTo Include="SimpleRetry.UnitTests" />
     </ItemGroup>
 
 </Project>

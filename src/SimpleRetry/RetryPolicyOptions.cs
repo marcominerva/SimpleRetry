@@ -16,6 +16,11 @@ public class RetryPolicyOptions
     public TimeSpan RetryDelay { get; set; } = TimeSpan.FromSeconds(2);
 
     /// <summary>
+    /// Gets or sets the maximum amount of time allowed for each request attempt. A <see langword="null" /> value disables the timeout.
+    /// </summary>
+    public TimeSpan? RequestTimeout { get; set; }
+
+    /// <summary>
     /// Gets or sets the strategy used to calculate the delay between retry attempts.
     /// </summary>
     public BackoffType BackoffType { get; set; } = BackoffType.Constant;

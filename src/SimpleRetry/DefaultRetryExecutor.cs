@@ -18,7 +18,7 @@ internal class DefaultRetryExecutor(RetryPolicyOptions options, IServiceProvider
         {
             try
             {
-                await operation(cancellationToken).ConfigureAwait(false);
+                await ExecuteOperationAsync(operation, cancellationToken).ConfigureAwait(false);
 
                 return;
             }
@@ -26,7 +26,7 @@ internal class DefaultRetryExecutor(RetryPolicyOptions options, IServiceProvider
             {
                 throw;
             }
-            catch (Exception exception) when (attempt < options.MaxRetryCount && options.ShouldHandle(exception))
+            catch (Exception exception) when (ShouldRetry(exception, attempt))
             {
                 attempt++;
 
@@ -49,13 +49,13 @@ internal class DefaultRetryExecutor(RetryPolicyOptions options, IServiceProvider
         {
             try
             {
-                return await operation(cancellationToken).ConfigureAwait(false);
+                return await ExecuteOperationAsync(operation, cancellationToken).ConfigureAwait(false);
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
                 throw;
             }
-            catch (Exception exception) when (attempt < options.MaxRetryCount && options.ShouldHandle(exception))
+            catch (Exception exception) when (ShouldRetry(exception, attempt))
             {
                 attempt++;
 
@@ -66,6 +66,48 @@ internal class DefaultRetryExecutor(RetryPolicyOptions options, IServiceProvider
             }
         }
     }
+
+    private async Task ExecuteOperationAsync(Func<CancellationToken, Task> operation, CancellationToken cancellationToken)
+    {
+        var task = operation(cancellationToken);
+
+        if (options.RequestTimeout is not { } requestTimeout)
+        {
+            await task.ConfigureAwait(false);
+            return;
+        }
+
+        try
+        {
+            await task.WaitAsync(requestTimeout, cancellationToken).ConfigureAwait(false);
+        }
+        catch (TimeoutException exception) when (!task.IsCompleted && !cancellationToken.IsCancellationRequested)
+        {
+            throw new RetryTimeoutException(requestTimeout, exception);
+        }
+    }
+
+    private async Task<T> ExecuteOperationAsync<T>(Func<CancellationToken, Task<T>> operation, CancellationToken cancellationToken)
+    {
+        var task = operation(cancellationToken);
+
+        if (options.RequestTimeout is not { } requestTimeout)
+        {
+            return await task.ConfigureAwait(false);
+        }
+
+        try
+        {
+            return await task.WaitAsync(requestTimeout, cancellationToken).ConfigureAwait(false);
+        }
+        catch (TimeoutException exception) when (!task.IsCompleted && !cancellationToken.IsCancellationRequested)
+        {
+            throw new RetryTimeoutException(requestTimeout, exception);
+        }
+    }
+
+    private bool ShouldRetry(Exception exception, int attempt)
+        => attempt < options.MaxRetryCount && (exception is RetryTimeoutException || (options.ShouldHandle?.Invoke(exception) ?? true));
 
     private Task OnRetryAsync(int attempt, TimeSpan retryDelay, Exception exception)
         => options.OnRetry?.Invoke(new(attempt, options.MaxRetryCount, retryDelay, exception, serviceProvider, loggerFactory))
