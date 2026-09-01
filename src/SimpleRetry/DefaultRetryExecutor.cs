@@ -71,7 +71,7 @@ internal class DefaultRetryExecutor(RetryPolicyOptions options, IServiceProvider
     {
         var task = operation(cancellationToken);
 
-        if (options.RequestTimeout is not { } requestTimeout)
+        if (options.AttemptTimeout is not { } attemptTimeout)
         {
             await task.ConfigureAwait(false);
             return;
@@ -79,11 +79,11 @@ internal class DefaultRetryExecutor(RetryPolicyOptions options, IServiceProvider
 
         try
         {
-            await task.WaitAsync(requestTimeout, cancellationToken).ConfigureAwait(false);
+            await task.WaitAsync(attemptTimeout, cancellationToken).ConfigureAwait(false);
         }
         catch (TimeoutException exception) when (!task.IsCompleted && !cancellationToken.IsCancellationRequested)
         {
-            throw new RetryTimeoutException(requestTimeout, exception);
+            throw new RetryTimeoutException(attemptTimeout, exception);
         }
     }
 
@@ -91,18 +91,18 @@ internal class DefaultRetryExecutor(RetryPolicyOptions options, IServiceProvider
     {
         var task = operation(cancellationToken);
 
-        if (options.RequestTimeout is not { } requestTimeout)
+        if (options.AttemptTimeout is not { } attemptTimeout)
         {
             return await task.ConfigureAwait(false);
         }
 
         try
         {
-            return await task.WaitAsync(requestTimeout, cancellationToken).ConfigureAwait(false);
+            return await task.WaitAsync(attemptTimeout, cancellationToken).ConfigureAwait(false);
         }
         catch (TimeoutException exception) when (!task.IsCompleted && !cancellationToken.IsCancellationRequested)
         {
-            throw new RetryTimeoutException(requestTimeout, exception);
+            throw new RetryTimeoutException(attemptTimeout, exception);
         }
     }
 

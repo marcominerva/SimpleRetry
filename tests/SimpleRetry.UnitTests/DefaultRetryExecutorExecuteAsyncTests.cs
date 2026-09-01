@@ -3,7 +3,7 @@ using SimpleRetryTools;
 
 namespace SimpleRetry.UnitTests;
 
-public class DefaultRetryExecutorTests
+public class DefaultRetryExecutorExecuteAsyncTests
 {
     [Fact]
     public void RetryPolicyOptionsWhenCreatedThenUsesExpectedDefaults()
@@ -12,14 +12,14 @@ public class DefaultRetryExecutorTests
 
         Assert.Equal(3, options.MaxRetryCount);
         Assert.Equal(TimeSpan.FromSeconds(2), options.RetryDelay);
-        Assert.Null(options.RequestTimeout);
+        Assert.Null(options.AttemptTimeout);
         Assert.Equal(BackoffType.Constant, options.BackoffType);
         Assert.True(options.ShouldHandle(new InvalidOperationException()));
         Assert.Null(options.OnRetry);
     }
 
     [Fact]
-    public async Task ExecuteAsyncWhenOperationSucceedsThenRunsOnce()
+    public async Task WhenOperationSucceedsThenRunsOnce()
     {
         var executor = CreateExecutor(new());
         var attempts = 0;
@@ -34,7 +34,7 @@ public class DefaultRetryExecutorTests
     }
 
     [Fact]
-    public async Task ExecuteAsyncWhenHandledExceptionIsThrownThenRetriesOperation()
+    public async Task WhenHandledExceptionIsThrownThenRetriesOperation()
     {
         var executor = CreateExecutor(new()
         {
@@ -61,18 +61,18 @@ public class DefaultRetryExecutorTests
     }
 
     [Fact]
-    public async Task ExecuteAsyncWhenRequestTimeoutExpiresThenRetriesOperation()
+    public async Task WhenAttemptTimeoutExpiresThenRetriesOperation()
     {
         var handledExceptions = new List<Exception>();
         var retryExceptions = new List<Exception>();
-        var requestTimeout = TimeSpan.FromSeconds(3);
+        var attemptTimeout = TimeSpan.FromSeconds(3);
         var operationDuration = TimeSpan.FromSeconds(5);
 
         var executor = CreateExecutor(new()
         {
             MaxRetryCount = 1,
             RetryDelay = TimeSpan.Zero,
-            RequestTimeout = requestTimeout,
+            AttemptTimeout = attemptTimeout,
             ShouldHandle = exception =>
             {
                 handledExceptions.Add(exception);
@@ -93,7 +93,7 @@ public class DefaultRetryExecutorTests
             return Task.Delay(operationDuration, cancellationToken);
         }, TestContext.Current.CancellationToken));
 
-        Assert.Equal(requestTimeout, exception.Timeout);
+        Assert.Equal(attemptTimeout, exception.Timeout);
 
         Assert.Equal(2, attempts);
         Assert.Empty(handledExceptions);
@@ -103,7 +103,7 @@ public class DefaultRetryExecutorTests
     }
 
     [Fact]
-    public async Task ExecuteAsyncWhenMaxRetryCountIsZeroThenDoesNotRetry()
+    public async Task WhenMaxRetryCountIsZeroThenDoesNotRetry()
     {
         var retryCalled = false;
 
@@ -132,13 +132,13 @@ public class DefaultRetryExecutorTests
     }
 
     [Fact]
-    public async Task ExecuteAsyncWhenRequestTimeoutIsNullThenDoesNotApplyTimeout()
+    public async Task WhenAttemptTimeoutIsNullThenDoesNotApplyTimeout()
     {
         var executor = CreateExecutor(new()
         {
             MaxRetryCount = 1,
             RetryDelay = TimeSpan.Zero,
-            RequestTimeout = null
+            AttemptTimeout = null
         });
 
         var attempts = 0;
@@ -153,7 +153,7 @@ public class DefaultRetryExecutorTests
     }
 
     [Fact]
-    public async Task ExecuteAsyncWhenOperationThrowsTimeoutExceptionThenUsesShouldHandle()
+    public async Task WhenOperationThrowsTimeoutExceptionThenUsesShouldHandle()
     {
         var handledExceptions = new List<Exception>();
 
@@ -161,7 +161,7 @@ public class DefaultRetryExecutorTests
         {
             MaxRetryCount = 1,
             RetryDelay = TimeSpan.Zero,
-            RequestTimeout = TimeSpan.FromSeconds(1),
+            AttemptTimeout = TimeSpan.FromSeconds(1),
             ShouldHandle = exception =>
             {
                 handledExceptions.Add(exception);
@@ -184,7 +184,7 @@ public class DefaultRetryExecutorTests
     }
 
     [Fact]
-    public async Task ExecuteAsyncWhenShouldHandleThrowsThenPropagatesOriginalException()
+    public async Task WhenShouldHandleThrowsThenPropagatesOriginalException()
     {
         var operationException = new InvalidOperationException();
 
@@ -208,7 +208,7 @@ public class DefaultRetryExecutorTests
     }
 
     [Fact]
-    public async Task ExecuteAsyncWhenShouldHandleIsNullThenRetriesOperation()
+    public async Task WhenShouldHandleIsNullThenRetriesOperation()
     {
         var executor = CreateExecutor(new()
         {
@@ -235,7 +235,7 @@ public class DefaultRetryExecutorTests
     }
 
     [Fact]
-    public async Task ExecuteAsyncWhenHandledAndUnhandledExceptionsAreThrownThenRetriesOnlyHandledExceptions()
+    public async Task WhenHandledAndUnhandledExceptionsAreThrownThenRetriesOnlyHandledExceptions()
     {
         var retryExceptions = new List<Exception>();
 
@@ -273,7 +273,7 @@ public class DefaultRetryExecutorTests
     [InlineData(BackoffType.Constant, 2, 2, 2)]
     [InlineData(BackoffType.Linear, 2, 4, 6)]
     [InlineData(BackoffType.Exponential, 2, 4, 8)]
-    public async Task ExecuteAsyncWhenBackoffTypeVariesThenReportsExpectedRetryDelays(BackoffType backoffType, int firstDelayMilliseconds, int secondDelayMilliseconds, int thirdDelayMilliseconds)
+    public async Task WhenBackoffTypeVariesThenReportsExpectedRetryDelays(BackoffType backoffType, int firstDelayMilliseconds, int secondDelayMilliseconds, int thirdDelayMilliseconds)
     {
         var retryDelays = new List<TimeSpan>();
 
@@ -313,7 +313,7 @@ public class DefaultRetryExecutorTests
     }
 
     [Fact]
-    public async Task ExecuteAsyncWhenMaxRetryCountIsGreaterThanOneThenRetriesUntilOperationSucceeds()
+    public async Task WhenMaxRetryCountIsGreaterThanOneThenRetriesUntilOperationSucceeds()
     {
         var retryAttempts = new List<int>();
 
@@ -348,7 +348,7 @@ public class DefaultRetryExecutorTests
     }
 
     [Fact]
-    public async Task ExecuteAsyncWhenRetryIsAttemptedThenPassesExpectedOnRetryArguments()
+    public async Task WhenRetryIsAttemptedThenPassesExpectedOnRetryArguments()
     {
         var retryArguments = new List<OnRetryArguments>();
         var exceptionToHandle = new InvalidOperationException();
@@ -390,7 +390,7 @@ public class DefaultRetryExecutorTests
     }
 
     [Fact]
-    public async Task ExecuteAsyncWhenCancellationTokenIsSignaledDuringRetryDelayThenThrowsImmediately()
+    public async Task WhenCancellationTokenIsSignaledDuringRetryDelayThenThrowsImmediately()
     {
         using var cancellationTokenSource = new CancellationTokenSource();
 
@@ -414,7 +414,7 @@ public class DefaultRetryExecutorTests
     }
 
     [Fact]
-    public async Task ExecuteAsyncWhenCancellationTokenIsSignaledThenThrowsImmediately()
+    public async Task WhenCancellationTokenIsSignaledThenThrowsImmediately()
     {
         using var cancellationTokenSource = new CancellationTokenSource();
         await cancellationTokenSource.CancelAsync();
@@ -446,7 +446,7 @@ public class DefaultRetryExecutorTests
     }
 
     [Fact]
-    public async Task ExecuteAsyncOfTWhenOperationSucceedsThenReturnsResult()
+    public async Task OfTWhenOperationSucceedsThenReturnsResult()
     {
         var executor = CreateExecutor(new());
 
@@ -456,7 +456,7 @@ public class DefaultRetryExecutorTests
     }
 
     [Fact]
-    public async Task ExecuteAsyncOfTWhenHandledExceptionIsThrownThenRetriesOperationAndReturnsResult()
+    public async Task OfTWhenHandledExceptionIsThrownThenRetriesOperationAndReturnsResult()
     {
         var executor = CreateExecutor(new()
         {
@@ -484,7 +484,7 @@ public class DefaultRetryExecutorTests
     }
 
     [Fact]
-    public async Task ExecuteAsyncOfTWhenUnhandledExceptionIsThrownThenDoesNotRetry()
+    public async Task OfTWhenUnhandledExceptionIsThrownThenDoesNotRetry()
     {
         var executor = CreateExecutor(new()
         {
