@@ -64,8 +64,8 @@ public partial class DefaultRetryExecutorExecuteAsyncTests
     [Fact]
     public async Task WhenAttemptTimeoutExpiresThenRetriesOperation()
     {
-        var handledExceptions = new List<Exception>();
-        var retryExceptions = new List<Exception>();
+        var handledExceptions = new List<Exception?>();
+        var retryExceptions = new List<Exception?>();
         var attemptTimeout = TimeSpan.FromSeconds(3);
         var operationDuration = TimeSpan.FromSeconds(5);
 
@@ -277,7 +277,7 @@ public partial class DefaultRetryExecutorExecuteAsyncTests
     [Fact]
     public async Task WhenHandledAndUnhandledExceptionsAreThrownThenRetriesOnlyHandledExceptions()
     {
-        var retryExceptions = new List<Exception>();
+        var retryExceptions = new List<Exception?>();
 
         var executor = CreateExecutor(new()
         {
