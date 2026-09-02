@@ -3,7 +3,6 @@ using SimpleRetry;
 var builder = WebApplication.CreateBuilder(args);
 
 // Add services to the container.
-// Learn more about configuring OpenAPI at https://aka.ms/aspnet/openapi
 builder.Services.AddOpenApi();
 
 builder.Services.AddSimpleRetry("TestService", options =>
@@ -11,11 +10,19 @@ builder.Services.AddSimpleRetry("TestService", options =>
     options.MaxRetryCount = 3;
     options.RetryDelay = TimeSpan.FromSeconds(2);
     options.BackoffType = BackoffType.Linear;
-    options.ShouldHandle = ex => ex is HttpRequestException; // Only retry on HttpRequestException,
+    options.ShouldHandle = outcome => outcome switch
+    {
+        { Exception: HttpRequestException or TaskCanceledException } => true,
+        //{ Exception: TaskCanceledException { InnerException: TimeoutException } } => true,
+        { Result: HttpResponseMessage { IsSuccessStatusCode: false } } => true,
+        _ => false
+    };
+    //options.ShouldHandle = outcome => outcome.Exception is HttpRequestException
+    //    || (outcome.TryGetResult(out HttpResponseMessage? response) && response?.IsSuccessStatusCode == false);
     options.OnRetry = args =>
     {
         // Handle the retry event (e.g., logging)
-        Console.WriteLine($"Retry {args.AttemptNumber} of {args.MaxRetryCount} after {args.RetryDelay} due to {args.Exception?.Message}");
+        Console.WriteLine($"Retry {args.AttemptNumber} of {args.MaxRetryCount} after {args.RetryDelay} due to {args.Outcome.Exception?.Message}");
         return Task.CompletedTask;
     };
 
@@ -38,27 +45,22 @@ app.MapSwaggerUI(setupAction: options =>
     options.SwaggerEndpoint("/openapi/v1.json", "My API V1");
 });
 
-//ResiliencePipeline pipeline = new ResiliencePipelineBuilder()
-//    .AddRetry(new RetryStrategyOptions()
-//    {
-//        OnRetry = (args) =>
-//        {
-//            // Handle the retry event (e.g., logging)
-//            Console.WriteLine($"Retry {args.Context} after {delay} due to {outcome.Exception?.Message}");
-//        }
-//    }) // Add retry using the default options
-//    .AddTimeout(TimeSpan.FromSeconds(10)) // Add 10 seconds timeout
-//    .Build(); // Builds the resilience pipeline
-
-//// Execute the pipeline asynchronously
-//await pipeline.ExecuteAsync(
-
 app.MapGet("/api/test", async ([FromKeyedServices("TestService")] IRetryExecutor pipelineExecutor) =>
 {
     await pipelineExecutor.ExecuteAsync(async cancellationToken =>
     {
         throw new HttpRequestException();
     }, CancellationToken.None);
+});
+
+app.MapGet("/api/test2", async ([FromKeyedServices("AnotherService")] IRetryExecutor pipelineExecutor) =>
+{
+    var result = await pipelineExecutor.ExecuteAsync(async cancellationToken =>
+    {
+        return TypedResults.Ok();
+    }, CancellationToken.None);
+
+    return result;
 });
 
 app.Run();

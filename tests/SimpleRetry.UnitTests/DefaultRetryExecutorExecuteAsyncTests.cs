@@ -15,7 +15,8 @@ public class DefaultRetryExecutorExecuteAsyncTests
         Assert.Equal(TimeSpan.FromSeconds(2), options.RetryDelay);
         Assert.Null(options.AttemptTimeout);
         Assert.Equal(BackoffType.Constant, options.BackoffType);
-        Assert.True(options.ShouldHandle(new InvalidOperationException()));
+        Assert.True(options.ShouldHandle(RetryOutcome.FromException(new InvalidOperationException())));
+        Assert.False(options.ShouldHandle(RetryOutcome.FromResult("result")));
         Assert.Null(options.OnRetry);
     }
 
@@ -41,7 +42,7 @@ public class DefaultRetryExecutorExecuteAsyncTests
         {
             MaxRetryCount = 1,
             RetryDelay = TimeSpan.Zero,
-            ShouldHandle = exception => exception is InvalidOperationException
+            ShouldHandle = outcome => outcome.Exception is InvalidOperationException
         });
 
         var attempts = 0;
@@ -74,14 +75,14 @@ public class DefaultRetryExecutorExecuteAsyncTests
             MaxRetryCount = 1,
             RetryDelay = TimeSpan.Zero,
             AttemptTimeout = attemptTimeout,
-            ShouldHandle = exception =>
+            ShouldHandle = outcome =>
             {
-                handledExceptions.Add(exception);
+                handledExceptions.Add(outcome.Exception!);
                 return false;
             },
             OnRetry = arguments =>
             {
-                retryExceptions.Add(arguments.Exception);
+                retryExceptions.Add(arguments.Outcome.Exception);
                 return Task.CompletedTask;
             }
         });
@@ -112,7 +113,7 @@ public class DefaultRetryExecutorExecuteAsyncTests
         {
             MaxRetryCount = 0,
             RetryDelay = TimeSpan.Zero,
-            ShouldHandle = exception => exception is InvalidOperationException,
+            ShouldHandle = outcome => outcome.Exception is InvalidOperationException,
             OnRetry = _ =>
             {
                 retryCalled = true;
@@ -163,9 +164,9 @@ public class DefaultRetryExecutorExecuteAsyncTests
             MaxRetryCount = 1,
             RetryDelay = TimeSpan.Zero,
             AttemptTimeout = TimeSpan.FromSeconds(1),
-            ShouldHandle = exception =>
+            ShouldHandle = outcome =>
             {
-                handledExceptions.Add(exception);
+                handledExceptions.Add(outcome.Exception!);
                 return false;
             }
         });
@@ -209,13 +210,12 @@ public class DefaultRetryExecutorExecuteAsyncTests
     }
 
     [Fact]
-    public async Task WhenShouldHandleIsNullThenRetriesOperation()
+    public async Task WhenShouldHandleIsNotConfiguredThenRetriesOperation()
     {
         var executor = CreateExecutor(new()
         {
             MaxRetryCount = 1,
-            RetryDelay = TimeSpan.Zero,
-            ShouldHandle = null!
+            RetryDelay = TimeSpan.Zero
         });
 
         var attempts = 0;
@@ -244,10 +244,10 @@ public class DefaultRetryExecutorExecuteAsyncTests
         {
             MaxRetryCount = 3,
             RetryDelay = TimeSpan.Zero,
-            ShouldHandle = exception => exception is InvalidOperationException,
+            ShouldHandle = outcome => outcome.Exception is InvalidOperationException,
             OnRetry = arguments =>
             {
-                retryExceptions.Add(arguments.Exception);
+                retryExceptions.Add(arguments.Outcome.Exception);
                 return Task.CompletedTask;
             }
         });
@@ -283,7 +283,7 @@ public class DefaultRetryExecutorExecuteAsyncTests
             MaxRetryCount = 3,
             RetryDelay = TimeSpan.FromMilliseconds(2),
             BackoffType = backoffType,
-            ShouldHandle = exception => exception is InvalidOperationException,
+            ShouldHandle = outcome => outcome.Exception is InvalidOperationException,
             OnRetry = arguments =>
             {
                 retryDelays.Add(arguments.RetryDelay);
@@ -322,7 +322,7 @@ public class DefaultRetryExecutorExecuteAsyncTests
         {
             MaxRetryCount = 2,
             RetryDelay = TimeSpan.Zero,
-            ShouldHandle = exception => exception is InvalidOperationException,
+            ShouldHandle = outcome => outcome.Exception is InvalidOperationException,
             OnRetry = arguments =>
             {
                 retryAttempts.Add(arguments.AttemptNumber);
@@ -358,7 +358,7 @@ public class DefaultRetryExecutorExecuteAsyncTests
         {
             MaxRetryCount = 2,
             RetryDelay = TimeSpan.FromMilliseconds(25),
-            ShouldHandle = exception => ReferenceEquals(exception, exceptionToHandle),
+            ShouldHandle = outcome => ReferenceEquals(outcome.Exception, exceptionToHandle),
             OnRetry = arguments =>
             {
                 retryArguments.Add(arguments);
@@ -385,7 +385,7 @@ public class DefaultRetryExecutorExecuteAsyncTests
         Assert.Equal(1, arguments.AttemptNumber);
         Assert.Equal(2, arguments.MaxRetryCount);
         Assert.Equal(TimeSpan.FromMilliseconds(25), arguments.RetryDelay);
-        Assert.Same(exceptionToHandle, arguments.Exception);
+        Assert.Same(exceptionToHandle, arguments.Outcome.Exception);
         Assert.Same(NullServiceProvider.Instance, arguments.ServiceProvider);
         Assert.Same(NullLoggerFactory.Instance, arguments.LoggerFactory);
     }
@@ -399,7 +399,7 @@ public class DefaultRetryExecutorExecuteAsyncTests
         {
             MaxRetryCount = 3,
             RetryDelay = TimeSpan.FromMinutes(1),
-            ShouldHandle = exception => exception is InvalidOperationException,
+            ShouldHandle = outcome => outcome.Exception is InvalidOperationException,
             OnRetry = async _ => await cancellationTokenSource.CancelAsync()
         });
 
@@ -463,7 +463,7 @@ public class DefaultRetryExecutorExecuteAsyncTests
         {
             MaxRetryCount = 1,
             RetryDelay = TimeSpan.Zero,
-            ShouldHandle = exception => exception is InvalidOperationException
+            ShouldHandle = outcome => outcome.Exception is InvalidOperationException
         });
 
         var attempts = 0;
@@ -485,13 +485,68 @@ public class DefaultRetryExecutorExecuteAsyncTests
     }
 
     [Fact]
+    public async Task OfTWhenHandledResultIsReturnedThenRetriesOperationAndReturnsResult()
+    {
+        var outcomes = new List<RetryOutcome>();
+
+        var executor = CreateExecutor(new()
+        {
+            MaxRetryCount = 1,
+            RetryDelay = TimeSpan.Zero,
+            ShouldHandle = outcome => outcome is { Result: HttpStatusCode.ServiceUnavailable },
+            OnRetry = arguments =>
+            {
+                outcomes.Add(arguments.Outcome);
+                return Task.CompletedTask;
+            }
+        });
+
+        var attempts = 0;
+
+        var result = await executor.ExecuteAsync(_ =>
+        {
+            attempts++;
+            return Task.FromResult(attempts == 1 ? HttpStatusCode.ServiceUnavailable : HttpStatusCode.OK);
+        }, TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.OK, result);
+        Assert.Equal(2, attempts);
+
+        var outcome = Assert.Single(outcomes);
+        Assert.Null(outcome.Exception);
+        Assert.Equal(HttpStatusCode.ServiceUnavailable, outcome.Result);
+    }
+
+    [Fact]
+    public async Task OfTWhenHandledResultIsReturnedAndRetriesAreExhaustedThenReturnsLastResult()
+    {
+        var executor = CreateExecutor(new()
+        {
+            MaxRetryCount = 2,
+            RetryDelay = TimeSpan.Zero,
+            ShouldHandle = outcome => outcome is { Result: HttpStatusCode.ServiceUnavailable }
+        });
+
+        var attempts = 0;
+
+        var result = await executor.ExecuteAsync(_ =>
+        {
+            attempts++;
+            return Task.FromResult(HttpStatusCode.ServiceUnavailable);
+        }, TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.ServiceUnavailable, result);
+        Assert.Equal(3, attempts);
+    }
+
+    [Fact]
     public async Task OfTWhenUnhandledExceptionIsThrownThenDoesNotRetry()
     {
         var executor = CreateExecutor(new()
         {
             MaxRetryCount = 1,
             RetryDelay = TimeSpan.Zero,
-            ShouldHandle = exception => exception is InvalidOperationException
+            ShouldHandle = outcome => outcome.Exception is InvalidOperationException
         });
 
         var attempts = 0;

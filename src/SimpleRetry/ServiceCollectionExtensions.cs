@@ -68,9 +68,9 @@ public static class ServiceCollectionExtensions
             ArgumentNullException.ThrowIfNull(services);
             ArgumentNullException.ThrowIfNull(configure);
 
-            services.AddSimpleRetry(serviceKey, (_, options) => configure(options));
+services.AddSimpleRetry(serviceKey, (_, options) => configure(options));
 
-            return services;
+return services;
         }
 
         /// <summary>
@@ -91,8 +91,8 @@ public static class ServiceCollectionExtensions
                 return options;
             });
 
-            services.TryAddKeyedSingleton<IRetryExecutor>(KeyedService.AnyKey, (services, key) =>
-            {
+services.TryAddKeyedSingleton<IRetryExecutor>(KeyedService.AnyKey, (services, key) =>
+{
                 var options = services.GetKeyedService<RetryPolicyOptions>(key) ?? new RetryPolicyOptions();
                 var loggerFactory = services.GetService<ILoggerFactory>() ?? NullLoggerFactory.Instance;
                 return new DefaultRetryExecutor(options, services, loggerFactory);

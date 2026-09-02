@@ -71,7 +71,7 @@ public class ServiceCollectionExtensionsTests
         {
             options.MaxRetryCount = 1;
             options.RetryDelay = TimeSpan.Zero;
-            options.ShouldHandle = static exception => exception is InvalidOperationException;
+            options.ShouldHandle = static outcome => outcome.Exception is InvalidOperationException;
         });
 
         using var serviceProvider = services.BuildServiceProvider();

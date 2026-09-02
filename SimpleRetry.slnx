@@ -5,7 +5,7 @@
     <File Path="global.json" />
     <File Path="README.md" />
   </Folder>
-  <Project Path="samples/WebApplication1/WebApplication1.csproj" />
+  <Project Path="samples/SimpleRetrySample/SimpleRetrySample.csproj" />
   <Project Path="src/SimpleRetry/SimpleRetry.csproj" />
   <Project Path="tests/SimpleRetry.UnitTests/SimpleRetry.UnitTests.csproj" Id="97f6a469-da15-4d1f-8ff1-e55eaed66325" />
 </Solution>

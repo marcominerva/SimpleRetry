@@ -27,7 +27,9 @@ internal sealed class StandardResilienceHandler(RetryPolicyOptions options, ISer
             {
                 var response = await SendAttemptAsync(attemptRequest, cancellationToken).ConfigureAwait(false);
 
-                if (!ShouldRetryResponse(response, attempt))
+                var responseOutcome = RetryOutcome.FromResult(response);
+
+                if (!ShouldRetry(responseOutcome, attempt))
                 {
                     return response;
                 }
@@ -35,9 +37,7 @@ internal sealed class StandardResilienceHandler(RetryPolicyOptions options, ISer
                 attempt++;
 
                 var retryDelay = GetRetryDelay(attempt, response.Headers.RetryAfter);
-                var retryException = new HttpRetryResponseException(response.StatusCode);
-
-                await OnRetryAsync(attempt, retryDelay, retryException).ConfigureAwait(false);
+                await OnRetryAsync(attempt, retryDelay, responseOutcome).ConfigureAwait(false);
 
                 response.Dispose();
                 await Task.Delay(retryDelay, cancellationToken).ConfigureAwait(false);
@@ -46,20 +46,32 @@ internal sealed class StandardResilienceHandler(RetryPolicyOptions options, ISer
             {
                 throw;
             }
-            catch (Exception exception) when (ShouldRetryException(exception, attempt))
+            catch (Exception exception) when (ShouldRetry(RetryOutcome.FromException(exception), attempt))
             {
                 attempt++;
 
                 var retryDelay = GetRetryDelay(attempt);
-                await OnRetryAsync(attempt, retryDelay, exception).ConfigureAwait(false);
+                await OnRetryAsync(attempt, retryDelay, RetryOutcome.FromException(exception)).ConfigureAwait(false);
 
                 await Task.Delay(retryDelay, cancellationToken).ConfigureAwait(false);
             }
         }
     }
 
-    internal static bool ShouldHandle(Exception exception)
-        => exception is HttpRequestException or RetryTimeoutException;
+    /// <summary>
+    /// Determines whether the outcome of an HTTP attempt is transient and can be retried.
+    /// </summary>
+    /// <remarks>
+    /// This is the default <see cref="RetryPolicyOptions.ShouldHandle"/> used by the standard HTTP resilience
+    /// handler. Because it is expressed as an outcome predicate, callers can replace it entirely to change both
+    /// the handled exceptions and the handled status codes.
+    /// </remarks>
+    internal static bool ShouldHandle(RetryOutcome outcome) => outcome switch
+    {
+        { Exception: HttpRequestException or RetryTimeoutException } => true,
+        { Result: HttpResponseMessage response } => IsTransientStatusCode(response.StatusCode),
+        _ => false
+    };
 
     private async Task<HttpResponseMessage> SendAttemptAsync(HttpRequestMessage request, CancellationToken cancellationToken)
     {
@@ -81,14 +93,13 @@ internal sealed class StandardResilienceHandler(RetryPolicyOptions options, ISer
         }
     }
 
-    private bool ShouldRetryResponse(HttpResponseMessage response, int attempt)
-        => attempt < options.MaxRetryCount && IsTransientStatusCode(response.StatusCode);
+    // A timeout is produced by the policy itself, so it is always retried regardless of the configured
+    // predicate, which would otherwise have to know about an exception type it never throws.
+    private bool ShouldRetry(RetryOutcome outcome, int attempt)
+        => attempt < options.MaxRetryCount && (outcome.Exception is RetryTimeoutException || options.ShouldHandle(outcome));
 
-    private bool ShouldRetryException(Exception exception, int attempt)
-        => attempt < options.MaxRetryCount && (options.ShouldHandle?.Invoke(exception) ?? true);
-
-    private Task OnRetryAsync(int attempt, TimeSpan retryDelay, Exception exception)
-        => options.OnRetry?.Invoke(new(attempt, options.MaxRetryCount, retryDelay, exception, serviceProvider, loggerFactory)) ?? Task.CompletedTask;
+    private Task OnRetryAsync(int attempt, TimeSpan retryDelay, RetryOutcome outcome)
+        => options.OnRetry?.Invoke(new(attempt, options.MaxRetryCount, retryDelay, outcome, serviceProvider, loggerFactory)) ?? Task.CompletedTask;
 
     private TimeSpan GetRetryDelay(int attempt, RetryConditionHeaderValue? retryAfter = null)
     {
@@ -136,9 +147,6 @@ internal sealed class StandardResilienceHandler(RetryPolicyOptions options, ISer
 
         return clone;
     }
-
-    private sealed class HttpRetryResponseException(HttpStatusCode statusCode)
-        : HttpRequestException($"The HTTP response status code '{(int)statusCode}' is transient and can be retried.", null, statusCode);
 
     private sealed class RequestContentSnapshot(byte[] content, HttpContentHeaders headers)
     {

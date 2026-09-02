@@ -16,21 +16,15 @@ internal class DefaultRetryExecutor(RetryPolicyOptions options, IServiceProvider
             try
             {
                 await ExecuteOperationAsync(operation, cancellationToken).ConfigureAwait(false);
-
                 return;
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
                 throw;
             }
-            catch (Exception exception) when (ShouldRetry(exception, attempt))
+            catch (Exception exception) when (ShouldRetry(RetryOutcome.FromException(exception), attempt))
             {
-                attempt++;
-
-                var retryDelay = GetRetryDelay(attempt);
-                await OnRetryAsync(attempt, retryDelay, exception).ConfigureAwait(false);
-
-                await Task.Delay(retryDelay, cancellationToken).ConfigureAwait(false);
+                await WaitForNextAttemptAsync(++attempt, RetryOutcome.FromException(exception), cancellationToken).ConfigureAwait(false);
             }
         }
     }
@@ -44,29 +38,35 @@ internal class DefaultRetryExecutor(RetryPolicyOptions options, IServiceProvider
 
         while (true)
         {
+            RetryOutcome outcome;
+
             try
             {
-                return await ExecuteOperationAsync(operation, cancellationToken).ConfigureAwait(false);
+                var result = await ExecuteOperationAsync(operation, cancellationToken).ConfigureAwait(false);
+
+                outcome = RetryOutcome.FromResult(result);
+
+                if (!ShouldRetry(outcome, attempt))
+                {
+                    return result;
+                }
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
                 throw;
             }
-            catch (Exception exception) when (ShouldRetry(exception, attempt))
+            catch (Exception exception) when (ShouldRetry(RetryOutcome.FromException(exception), attempt))
             {
-                attempt++;
-
-                var retryDelay = GetRetryDelay(attempt);
-                await OnRetryAsync(attempt, retryDelay, exception).ConfigureAwait(false);
-
-                await Task.Delay(retryDelay, cancellationToken).ConfigureAwait(false);
+                outcome = RetryOutcome.FromException(exception);
             }
+
+            await WaitForNextAttemptAsync(++attempt, outcome, cancellationToken).ConfigureAwait(false);
         }
     }
 
-    private async Task ExecuteOperationAsync(Func<CancellationToken, Task> operation, CancellationToken cancellationToken)
-    {
-        var task = operation(cancellationToken);
+private async Task ExecuteOperationAsync(Func<CancellationToken, Task> operation, CancellationToken cancellationToken)
+{
+    var task = operation(cancellationToken);
 
         if (options.AttemptTimeout is not TimeSpan attemptTimeout)
         {
@@ -103,12 +103,22 @@ internal class DefaultRetryExecutor(RetryPolicyOptions options, IServiceProvider
         }
     }
 
-    private bool ShouldRetry(Exception exception, int attempt)
-        => attempt < options.MaxRetryCount && (exception is RetryTimeoutException || (options.ShouldHandle?.Invoke(exception) ?? true));
+    // A timeout is produced by the policy itself, so it is always retried regardless of the configured
+    // predicate, which would otherwise have to know about an exception type it never throws.
+    private bool ShouldRetry(RetryOutcome outcome, int attempt)
+        => attempt < options.MaxRetryCount && (outcome.Exception is RetryTimeoutException || options.ShouldHandle(outcome));
 
-    private Task OnRetryAsync(int attempt, TimeSpan retryDelay, Exception exception)
-        => options.OnRetry?.Invoke(new(attempt, options.MaxRetryCount, retryDelay, exception, serviceProvider, loggerFactory))
-            ?? Task.CompletedTask;
+    private async Task WaitForNextAttemptAsync(int attempt, RetryOutcome outcome, CancellationToken cancellationToken)
+    {
+        var retryDelay = GetRetryDelay(attempt);
+
+        if (options.OnRetry is not null)
+        {
+            await options.OnRetry(new(attempt, options.MaxRetryCount, retryDelay, outcome, serviceProvider, loggerFactory)).ConfigureAwait(false);
+        }
+
+        await Task.Delay(retryDelay, cancellationToken).ConfigureAwait(false);
+    }
 
     private TimeSpan GetRetryDelay(int attempt) => options.BackoffType switch
     {

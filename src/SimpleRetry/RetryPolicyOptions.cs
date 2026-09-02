@@ -26,9 +26,21 @@ public class RetryPolicyOptions
     public BackoffType BackoffType { get; set; } = BackoffType.Constant;
 
     /// <summary>
-    /// Gets or sets the predicate used to determine whether an exception should be handled by the retry policy.
+    /// Gets or sets the predicate used to determine whether the outcome of an execution attempt should be
+    /// handled by the retry policy.
     /// </summary>
-    public Func<Exception, bool> ShouldHandle { get; set; } = _ => true;
+    /// <remarks>
+    /// The predicate receives both faulted and successful outcomes, so a retry can be triggered by a returned
+    /// value as well as by an exception. The default implementation retries every handled exception and never
+    /// retries a successful result.
+    /// </remarks>
+    /// <example>
+    /// <code language="csharp">
+    /// options.ShouldHandle = outcome => outcome.Exception is HttpRequestException
+    ///     || (outcome.TryGetResult(out HttpResponseMessage? response) &amp;&amp; !response.IsSuccessStatusCode);
+    /// </code>
+    /// </example>
+    public Func<RetryOutcome, bool> ShouldHandle { get; set; } = static outcome => outcome.IsException;
 
     /// <summary>
     /// Gets or sets the asynchronous callback invoked before each retry attempt.
