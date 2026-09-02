@@ -9,11 +9,24 @@ internal class DefaultRetryExecutor(RetryPolicyOptions options, IServiceProvider
     {
         ArgumentNullException.ThrowIfNull(operation);
 
-        await ExecuteAsync<object?>(async retryCancellationToken =>
+        var attempt = 0;
+
+        while (true)
         {
-            await operation(retryCancellationToken).ConfigureAwait(false);
-            return null;
-        }, cancellationToken).ConfigureAwait(false);
+            try
+            {
+                await operation(cancellationToken).ConfigureAwait(false);
+                return;
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception exception) when (attempt < options.MaxRetryCount && options.ShouldHandle(RetryOutcome.FromException(exception)))
+            {
+                await WaitForNextAttemptAsync(++attempt, RetryOutcome.FromException(exception), cancellationToken).ConfigureAwait(false);
+            }
+        }
     }
 
     /// <inheritdoc />
@@ -25,28 +38,48 @@ internal class DefaultRetryExecutor(RetryPolicyOptions options, IServiceProvider
 
         while (true)
         {
+            RetryOutcome outcome;
+
             try
             {
-                return await operation(cancellationToken).ConfigureAwait(false);
+                var result = await operation(cancellationToken).ConfigureAwait(false);
+
+                if (attempt >= options.MaxRetryCount)
+                {
+                    return result;
+                }
+
+                outcome = RetryOutcome.FromResult(result);
+
+                if (!options.ShouldHandle(outcome))
+                {
+                    return result;
+                }
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
                 throw;
             }
-            catch (Exception exception) when (attempt < options.MaxRetryCount && options.ShouldHandle(exception))
+            catch (Exception exception) when (attempt < options.MaxRetryCount && options.ShouldHandle(RetryOutcome.FromException(exception)))
             {
-                attempt++;
-
-                var retryDelay = GetRetryDelay(attempt);
-                await OnRetryAsync(attempt, retryDelay, exception).ConfigureAwait(false);
-
-                await Task.Delay(retryDelay, cancellationToken).ConfigureAwait(false);
+                outcome = RetryOutcome.FromException(exception);
             }
+
+            await WaitForNextAttemptAsync(++attempt, outcome, cancellationToken).ConfigureAwait(false);
         }
     }
 
-    private Task OnRetryAsync(int attempt, TimeSpan retryDelay, Exception exception)
-        => options.OnRetry?.Invoke(new(attempt, options.MaxRetryCount, retryDelay, exception, serviceProvider, loggerFactory)) ?? Task.CompletedTask;
+    private async Task WaitForNextAttemptAsync(int attempt, RetryOutcome outcome, CancellationToken cancellationToken)
+    {
+        var retryDelay = GetRetryDelay(attempt);
+
+        if (options.OnRetry is not null)
+        {
+            await options.OnRetry(new(attempt, options.MaxRetryCount, retryDelay, outcome, serviceProvider, loggerFactory)).ConfigureAwait(false);
+        }
+
+        await Task.Delay(retryDelay, cancellationToken).ConfigureAwait(false);
+    }
 
     private TimeSpan GetRetryDelay(int attempt) => options.BackoffType switch
     {

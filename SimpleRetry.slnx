@@ -4,6 +4,6 @@
     <File Path="Directory.Build.props" />
     <File Path="README.md" />
   </Folder>
+  <Project Path="samples/SimpleRetrySample/SimpleRetrySample.csproj" />
   <Project Path="src/SimpleRetry/SimpleRetry.csproj" />
-  <Project Path="samples/WebApplication1/WebApplication1.csproj" />
 </Solution>

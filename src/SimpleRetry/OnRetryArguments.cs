@@ -8,10 +8,10 @@ namespace SimpleRetry;
 /// <param name="attemptNumber">The current retry attempt number.</param>
 /// <param name="maxRetryCount">The maximum number of retry attempts configured for the operation.</param>
 /// <param name="retryDelay">The delay before the next retry attempt.</param>
-/// <param name="exception">The exception that caused the retry.</param>
+/// <param name="outcome">The outcome that caused the retry.</param>
 /// <param name="serviceProvider">The service provider associated with the retry executor.</param>
 /// <param name="loggerFactory">The logger factory available to retry callbacks.</param>
-public sealed class OnRetryArguments(int attemptNumber, int maxRetryCount, TimeSpan retryDelay, Exception exception, IServiceProvider serviceProvider, ILoggerFactory loggerFactory)
+public sealed class OnRetryArguments(int attemptNumber, int maxRetryCount, TimeSpan retryDelay, RetryOutcome outcome, IServiceProvider serviceProvider, ILoggerFactory loggerFactory)
 {
     /// <summary>
     /// Gets the current retry attempt number.
@@ -29,9 +29,9 @@ public sealed class OnRetryArguments(int attemptNumber, int maxRetryCount, TimeS
     public TimeSpan RetryDelay { get; } = retryDelay;
 
     /// <summary>
-    /// Gets the exception that caused the retry.
+    /// Gets the outcome that caused the retry, which can be either an exception or a handled result.
     /// </summary>
-    public Exception Exception { get; } = exception;
+    public RetryOutcome Outcome { get; } = outcome;
 
     /// <summary>
     /// Gets the service provider associated with the retry executor.
