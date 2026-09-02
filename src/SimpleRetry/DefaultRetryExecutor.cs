@@ -9,30 +9,11 @@ internal class DefaultRetryExecutor(RetryPolicyOptions options, IServiceProvider
     {
         ArgumentNullException.ThrowIfNull(operation);
 
-        var attempt = 0;
-
-        while (true)
+        await ExecuteAsync<object?>(async retryCancellationToken =>
         {
-            try
-            {
-                await operation(cancellationToken).ConfigureAwait(false);
-
-                return;
-            }
-            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-            {
-                throw;
-            }
-            catch (Exception exception) when (attempt < options.MaxRetryCount && options.ShouldHandle(exception))
-            {
-                attempt++;
-
-                var retryDelay = GetRetryDelay(attempt);
-                await OnRetryAsync(attempt, retryDelay, exception).ConfigureAwait(false);
-
-                await Task.Delay(retryDelay, cancellationToken).ConfigureAwait(false);
-            }
-        }
+            await operation(retryCancellationToken).ConfigureAwait(false);
+            return null;
+        }, cancellationToken).ConfigureAwait(false);
     }
 
     /// <inheritdoc />

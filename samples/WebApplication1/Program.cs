@@ -43,5 +43,15 @@ app.MapGet("/api/test", async ([FromKeyedServices("TestService")] IRetryExecutor
     }, CancellationToken.None);
 });
 
+app.MapGet("/api/test2", async ([FromKeyedServices("AnotherService")] IRetryExecutor pipelineExecutor) =>
+{
+    var result = await pipelineExecutor.ExecuteAsync(async cancellationToken =>
+    {
+        return TypedResults.Ok();
+    }, CancellationToken.None);
+
+    return result;
+});
+
 app.Run();
 
