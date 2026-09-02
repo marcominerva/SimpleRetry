@@ -37,19 +37,34 @@ public static class ServiceCollectionExtensions
         /// </summary>
         /// <param name="configure">The callback used to configure the retry policy.</param>
         /// <returns>The HTTP client builder for chaining additional registrations.</returns>
+        /// <remarks>
+        /// The retry policy is registered as a keyed service using the HTTP client name, so the very same
+        /// <see cref="IRetryExecutor"/> that runs standalone operations also drives the HTTP pipeline.
+        /// </remarks>
         public IHttpClientBuilder AddHttpSimpleRetry(Action<IServiceProvider, RetryPolicyOptions> configure)
         {
             ArgumentNullException.ThrowIfNull(builder);
             ArgumentNullException.ThrowIfNull(configure);
 
-            builder.AddHttpMessageHandler(services =>
+            builder.Services.AddKeyedSingleton(builder.Name, (services, _) =>
             {
-                var options = CreateStandardResilienceOptions();
-                configure(services, options);
+                var options = new RetryPolicyOptions()
+                {
+                    AttemptTimeout = TimeSpan.FromSeconds(10),
+                    BackoffType = BackoffType.Exponential,
+                    RetryDelay = TimeSpan.FromSeconds(2),
+                    RetryDelayGenerator = HttpRetryDelegatingHandler.GetRetryAfterDelay,
+                    ShouldHandle = HttpRetryDelegatingHandler.ShouldHandle,
+                    OnResultDiscarded = HttpRetryDelegatingHandler.DisposeDiscardedResponse
+                };
 
-                var loggerFactory = services.GetService<ILoggerFactory>() ?? NullLoggerFactory.Instance;
-                return new StandardResilienceHandler(options, services, loggerFactory);
+                configure(services, options);
+                return options;
             });
+
+            AddRetryExecutor(builder.Services);
+
+            builder.AddHttpMessageHandler(services => new HttpRetryDelegatingHandler(services.GetRequiredKeyedService<IRetryExecutor>(builder.Name)));
 
             return builder;
         }
@@ -68,9 +83,9 @@ public static class ServiceCollectionExtensions
             ArgumentNullException.ThrowIfNull(services);
             ArgumentNullException.ThrowIfNull(configure);
 
-services.AddSimpleRetry(serviceKey, (_, options) => configure(options));
+            services.AddSimpleRetry(serviceKey, (_, options) => configure(options));
 
-return services;
+            return services;
         }
 
         /// <summary>
@@ -91,20 +106,17 @@ return services;
                 return options;
             });
 
-services.TryAddKeyedSingleton<IRetryExecutor>(KeyedService.AnyKey, (services, key) =>
-{
-                var options = services.GetKeyedService<RetryPolicyOptions>(key) ?? new RetryPolicyOptions();
-                var loggerFactory = services.GetService<ILoggerFactory>() ?? NullLoggerFactory.Instance;
-                return new DefaultRetryExecutor(options, services, loggerFactory);
-            });
+            AddRetryExecutor(services);
 
             return services;
         }
     }
 
-    private static RetryPolicyOptions CreateStandardResilienceOptions()
-        => new()
+    private static void AddRetryExecutor(IServiceCollection services)
+        => services.TryAddKeyedSingleton<IRetryExecutor>(KeyedService.AnyKey, (services, key) =>
         {
-            ShouldHandle = StandardResilienceHandler.ShouldHandle
-        };
+            var options = services.GetKeyedService<RetryPolicyOptions>(key) ?? new RetryPolicyOptions();
+            var loggerFactory = services.GetService<ILoggerFactory>() ?? NullLoggerFactory.Instance;
+            return new DefaultRetryExecutor(options, services, loggerFactory);
+        });
 }

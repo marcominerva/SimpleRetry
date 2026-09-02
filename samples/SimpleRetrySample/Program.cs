@@ -32,7 +32,7 @@ builder.Services.AddSimpleRetry("TestService", options =>
     options.RetryDelay = TimeSpan.FromSeconds(1);
 });
 
-builder.Services.AddHttpClient("test").AddHttpSimpleRetry();
+builder.Services.AddHttpClient<string>().AddHttpSimpleRetry();
 
 var app = builder.Build();
 

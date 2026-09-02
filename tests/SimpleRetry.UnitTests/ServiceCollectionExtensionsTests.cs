@@ -123,6 +123,7 @@ public class ServiceCollectionExtensionsTests
     {
         var marker = new MarkerService(1);
         var handler = new SequenceHttpMessageHandler(static attempt => attempt == 1 ? new(HttpStatusCode.InternalServerError) : new(HttpStatusCode.OK));
+
         var services = new ServiceCollection();
         services.AddSingleton(marker);
 

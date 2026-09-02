@@ -64,21 +64,24 @@ internal class DefaultRetryExecutor(RetryPolicyOptions options, IServiceProvider
         }
     }
 
-private async Task ExecuteOperationAsync(Func<CancellationToken, Task> operation, CancellationToken cancellationToken)
-{
-    var task = operation(cancellationToken);
-
+    // The attempt timeout is applied by cancelling a linked token instead of just giving up on the returned task,
+    // so that the operation itself observes the cancellation and can release its resources.
+    private async Task ExecuteOperationAsync(Func<CancellationToken, Task> operation, CancellationToken cancellationToken)
+    {
         if (options.AttemptTimeout is not TimeSpan attemptTimeout)
         {
-            await task.ConfigureAwait(false);
+            await operation(cancellationToken).ConfigureAwait(false);
             return;
         }
 
+        using var timeoutCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        timeoutCancellation.CancelAfter(attemptTimeout);
+
         try
         {
-            await task.WaitAsync(attemptTimeout, cancellationToken).ConfigureAwait(false);
+            await operation(timeoutCancellation.Token).ConfigureAwait(false);
         }
-        catch (TimeoutException exception) when (!task.IsCompleted && !cancellationToken.IsCancellationRequested)
+        catch (OperationCanceledException exception) when (!cancellationToken.IsCancellationRequested && timeoutCancellation.IsCancellationRequested)
         {
             throw new RetryTimeoutException(attemptTimeout, exception);
         }
@@ -86,18 +89,19 @@ private async Task ExecuteOperationAsync(Func<CancellationToken, Task> operation
 
     private async Task<T> ExecuteOperationAsync<T>(Func<CancellationToken, Task<T>> operation, CancellationToken cancellationToken)
     {
-        var task = operation(cancellationToken);
-
         if (options.AttemptTimeout is not TimeSpan attemptTimeout)
         {
-            return await task.ConfigureAwait(false);
+            return await operation(cancellationToken).ConfigureAwait(false);
         }
+
+        using var timeoutCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        timeoutCancellation.CancelAfter(attemptTimeout);
 
         try
         {
-            return await task.WaitAsync(attemptTimeout, cancellationToken).ConfigureAwait(false);
+            return await operation(timeoutCancellation.Token).ConfigureAwait(false);
         }
-        catch (TimeoutException exception) when (!task.IsCompleted && !cancellationToken.IsCancellationRequested)
+        catch (OperationCanceledException exception) when (!cancellationToken.IsCancellationRequested && timeoutCancellation.IsCancellationRequested)
         {
             throw new RetryTimeoutException(attemptTimeout, exception);
         }
@@ -110,11 +114,16 @@ private async Task ExecuteOperationAsync(Func<CancellationToken, Task> operation
 
     private async Task WaitForNextAttemptAsync(int attempt, RetryOutcome outcome, CancellationToken cancellationToken)
     {
-        var retryDelay = GetRetryDelay(attempt);
+        var retryDelay = options.RetryDelayGenerator?.Invoke(outcome) ?? GetRetryDelay(attempt);
 
         if (options.OnRetry is not null)
         {
             await options.OnRetry(new(attempt, options.MaxRetryCount, retryDelay, outcome, serviceProvider, loggerFactory)).ConfigureAwait(false);
+        }
+
+        if (!outcome.IsException)
+        {
+            options.OnResultDiscarded?.Invoke(outcome);
         }
 
         await Task.Delay(retryDelay, cancellationToken).ConfigureAwait(false);

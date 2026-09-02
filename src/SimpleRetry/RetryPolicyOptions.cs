@@ -46,4 +46,23 @@ public class RetryPolicyOptions
     /// Gets or sets the asynchronous callback invoked before each retry attempt.
     /// </summary>
     public Func<OnRetryArguments, Task>? OnRetry { get; set; }
+
+    /// <summary>
+    /// Gets or sets the callback used to override the delay before the next retry attempt.
+    /// </summary>
+    /// <remarks>
+    /// Returning <see langword="null"/> falls back to the delay computed from <see cref="RetryDelay"/> and
+    /// <see cref="BackoffType"/>. This is how the HTTP policy honors the <c>Retry-After</c> response header.
+    /// </remarks>
+    public Func<RetryOutcome, TimeSpan?>? RetryDelayGenerator { get; set; }
+
+    /// <summary>
+    /// Gets or sets the callback invoked when a result is discarded because the operation is about to be retried.
+    /// </summary>
+    /// <remarks>
+    /// Only results are reported, never exceptions. This is the hook that lets a policy release resources owned by
+    /// the discarded value, such as disposing an <see cref="IDisposable"/> result that will never be returned to
+    /// the caller.
+    /// </remarks>
+    public Action<RetryOutcome>? OnResultDiscarded { get; set; }
 }
