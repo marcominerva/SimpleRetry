@@ -33,7 +33,7 @@ internal class DefaultRetryExecutor(RetryPolicyOptions options, IServiceProvider
             {
                 throw;
             }
-            catch (Exception exception) when (attempt < options.MaxRetryCount && options.ShouldHandle(exception))
+            catch (Exception exception) when (attempt < options.MaxRetryCount && (options.ShouldHandle?.Invoke(exception) ?? true))
             {
                 attempt++;
 

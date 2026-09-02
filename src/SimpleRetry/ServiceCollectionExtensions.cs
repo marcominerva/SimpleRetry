@@ -27,7 +27,7 @@ public static class ServiceCollectionExtensions
             configure(options);
 
             services.AddKeyedSingleton(serviceKey, options);
-            AddPipelineExecutor(services);
+            AddRetryExecutor(services);
 
             return services;
         }
@@ -50,12 +50,12 @@ public static class ServiceCollectionExtensions
                 return options;
             });
 
-            AddPipelineExecutor(services);
+            AddRetryExecutor(services);
 
             return services;
         }
 
-        private void AddPipelineExecutor()
+        private void AddRetryExecutor()
         {
             services.TryAddKeyedSingleton<IRetryExecutor>(KeyedService.AnyKey, (services, key) =>
             {
