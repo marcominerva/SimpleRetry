@@ -110,7 +110,7 @@ internal class DefaultRetryExecutor(RetryPolicyOptions options, IServiceProvider
     // A timeout is produced by the policy itself, so it is always retried regardless of the configured
     // predicate, which would otherwise have to know about an exception type it never throws.
     private bool ShouldRetry(RetryOutcome outcome, int attempt)
-        => attempt < options.MaxRetryCount && (outcome.Exception is RetryTimeoutException || options.ShouldHandle(outcome));
+        => attempt < options.MaxRetryCount && (outcome.Exception is RetryTimeoutException || (options.ShouldHandle?.Invoke(outcome) ?? true));
 
     private async Task WaitForNextAttemptAsync(int attempt, RetryOutcome outcome, CancellationToken cancellationToken)
     {
