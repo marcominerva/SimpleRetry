@@ -10,10 +10,10 @@ namespace SimpleRetry;
 /// <seealso cref="RetryPolicyOptions.ShouldHandle"/>
 public readonly struct RetryOutcome
 {
-    private RetryOutcome(Exception? exception, object? result)
+    private RetryOutcome(object? result, Exception? exception)
     {
-        Exception = exception;
         Result = result;
+        Exception = exception;
     }
 
     /// <summary>
@@ -42,7 +42,7 @@ public readonly struct RetryOutcome
     {
         ArgumentNullException.ThrowIfNull(exception);
 
-        return new(exception, null);
+        return new(null, exception);
     }
 
     /// <summary>
@@ -50,7 +50,7 @@ public readonly struct RetryOutcome
     /// </summary>
     /// <param name="result">The value returned by the operation.</param>
     /// <returns>An outcome holding <paramref name="result"/>.</returns>
-    public static RetryOutcome FromResult(object? result) => new(null, result);
+    public static RetryOutcome FromResult(object? result) => new(result, null);
 
     /// <summary>
     /// Attempts to get the result of the operation as the specified type.
