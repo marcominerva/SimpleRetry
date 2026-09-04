@@ -4,7 +4,6 @@ namespace SimpleRetry;
 
 internal class DefaultRetryExecutor(RetryPolicyOptions options, IServiceProvider serviceProvider, ILoggerFactory loggerFactory) : IRetryExecutor
 {
-    /// <inheritdoc />
     public async Task ExecuteAsync(Func<CancellationToken, Task> operation, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(operation);
@@ -29,7 +28,6 @@ internal class DefaultRetryExecutor(RetryPolicyOptions options, IServiceProvider
         }
     }
 
-    /// <inheritdoc />
     public async Task<T> ExecuteAsync<T>(Func<CancellationToken, Task<T>> operation, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(operation);
