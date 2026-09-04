@@ -54,15 +54,15 @@ public static class ServiceCollectionExtensions
 
             return services;
         }
+    }
 
-        private void AddRetryExecutor()
+    private static void AddRetryExecutor(IServiceCollection services)
+    {
+        services.TryAddKeyedSingleton<IRetryExecutor>(KeyedService.AnyKey, (services, key) =>
         {
-            services.TryAddKeyedSingleton<IRetryExecutor>(KeyedService.AnyKey, (services, key) =>
-            {
-                var options = services.GetKeyedService<RetryPolicyOptions>(key) ?? new RetryPolicyOptions();
-                var loggerFactory = services.GetService<ILoggerFactory>() ?? NullLoggerFactory.Instance;
-                return new DefaultRetryExecutor(options, services, loggerFactory);
-            });
-        }
+            var options = services.GetKeyedService<RetryPolicyOptions>(key) ?? new RetryPolicyOptions();
+            var loggerFactory = services.GetService<ILoggerFactory>() ?? NullLoggerFactory.Instance;
+            return new DefaultRetryExecutor(options, services, loggerFactory);
+        });
     }
 }
