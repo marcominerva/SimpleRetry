@@ -62,36 +62,25 @@ internal class DefaultRetryExecutor(RetryPolicyOptions options, IServiceProvider
         }
     }
 
-    // The attempt timeout is applied by cancelling a linked token instead of just giving up on the returned task,
-    // so that the operation itself observes the cancellation and can release its resources.
-    private async Task ExecuteOperationAsync(Func<CancellationToken, Task> operation, CancellationToken cancellationToken)
-    {
-        if (options.AttemptTimeout is not TimeSpan attemptTimeout)
+    private Task ExecuteOperationAsync(Func<CancellationToken, Task> operation, CancellationToken cancellationToken)
+        => ExecuteOperationAsync<object?>(async token =>
         {
-            await operation(cancellationToken).ConfigureAwait(false);
-            return;
-        }
-
-        using var timeoutCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        timeoutCancellation.CancelAfter(attemptTimeout);
-
-        try
-        {
-            await operation(timeoutCancellation.Token).ConfigureAwait(false);
-        }
-        catch (OperationCanceledException exception) when (!cancellationToken.IsCancellationRequested && timeoutCancellation.IsCancellationRequested)
-        {
-            throw new RetryTimeoutException(attemptTimeout, exception);
-        }
-    }
+            await operation(token).ConfigureAwait(false);
+            return null;
+        }, cancellationToken);
 
     private async Task<T> ExecuteOperationAsync<T>(Func<CancellationToken, Task<T>> operation, CancellationToken cancellationToken)
     {
+        // The attempt timeout is applied by cancelling a linked token instead of just giving up on the returned task,
+        // so that the operation itself observes the cancellation and can release its resources.
         if (options.AttemptTimeout is not TimeSpan attemptTimeout)
         {
             return await operation(cancellationToken).ConfigureAwait(false);
         }
 
+        // The linked source merges the caller cancellation with the attempt timeout into a single token, so the operation
+        // is cancelled by whichever happens first, and it can be cancelled without touching the caller token, which is not owned here.
+        // It is created per attempt, so every retry starts with a fresh timeout and the registration on the caller token is released by the using.
         using var timeoutCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         timeoutCancellation.CancelAfter(attemptTimeout);
 
@@ -99,7 +88,9 @@ internal class DefaultRetryExecutor(RetryPolicyOptions options, IServiceProvider
         {
             return await operation(timeoutCancellation.Token).ConfigureAwait(false);
         }
-        catch (OperationCanceledException exception) when (!cancellationToken.IsCancellationRequested && timeoutCancellation.IsCancellationRequested)
+        // Only the linked source being cancelled means the timeout expired; if the caller token is cancelled too,
+        // the original exception is propagated as-is, so the cancellation is not turned into a retriable timeout.
+        catch (OperationCanceledException exception) when (timeoutCancellation.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
         {
             throw new RetryTimeoutException(attemptTimeout, exception);
         }
