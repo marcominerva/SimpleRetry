@@ -39,7 +39,7 @@ public partial class DefaultRetryExecutorExecuteAsyncTests
     {
         var executor = CreateExecutor(new()
         {
-            MaxRetryCount = 1,
+            MaxRetryCount = 3,
             RetryDelay = TimeSpan.Zero,
             ShouldHandle = outcome => outcome.Exception is InvalidOperationException
         });
