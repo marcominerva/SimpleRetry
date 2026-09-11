@@ -251,7 +251,13 @@ The default HTTP policy:
 
 If a response does not contain `Retry-After`, the handler falls back to the configured `RetryDelay` and `BackoffType`.
 
-Each HTTP attempt uses a cloned `HttpRequestMessage`. If the original request has content, the content is buffered before the first attempt so each retry can send a fresh request body.
+### Request handling across attempts
+
+Each HTTP attempt resends the original `HttpRequestMessage`, reusing its `HttpContent` instance, so nothing is copied when a retry is not needed. This mirrors the behavior of the standard `Microsoft.Extensions.Http.Resilience` handler.
+
+The trade-off of not cloning is that any mutation applied by the inner handlers accumulates across attempts: headers can end up duplicated or overwritten, and a retry follows the URI that a redirect handler rewrote on the message instead of the original one.
+
+Because the body must be replayable across attempts, a request whose content is a `StreamContent` is rejected with an `InvalidOperationException`: its source stream is consumed by the first attempt and may not be seekable.
 
 ## Cancellation
 

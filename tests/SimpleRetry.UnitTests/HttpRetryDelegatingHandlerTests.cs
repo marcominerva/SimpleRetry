@@ -1,5 +1,6 @@
 ﻿using System.Net;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace SimpleRetry.UnitTests;
 
@@ -315,6 +316,109 @@ public class HttpRetryDelegatingHandlerTests
         ], observedDelays);
     }
 
+    [Fact]
+    public async Task WhenHttpRetryDelegatingHandlerReceivesStreamContentWithoutBufferingThenThrowsInvalidOperationException()
+    {
+        var handler = new SequenceHttpMessageHandler(static _ => new(HttpStatusCode.OK));
+
+        using var client = CreateClient(handler, bufferRequestContent: false);
+        using var content = new StreamContent(new MemoryStream("payload"u8.ToArray()));
+
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(()
+            => client.PostAsync("https://example.com", content, TestContext.Current.CancellationToken));
+
+        Assert.Contains(nameof(StreamContent), exception.Message);
+        Assert.Equal(0, handler.SendCount);
+    }
+
+    [Fact]
+    public async Task WhenHttpRetryDelegatingHandlerBuffersStreamContentThenEveryAttemptSendsTheSameBody()
+    {
+        var bodies = new List<string>();
+
+        var handler = new RecordingBodyHttpMessageHandler(bodies, static attempt => attempt == 1 ? HttpStatusCode.InternalServerError : HttpStatusCode.OK);
+
+        using var client = CreateClient(handler, bufferRequestContent: true);
+        using var content = new StreamContent(new NonSeekableStream("payload"u8.ToArray()));
+
+        using var response = await client.PostAsync("https://example.com", content, TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal(["payload", "payload"], bodies);
+    }
+
+    [Fact]
+    public async Task WhenHttpRetryDelegatingHandlerRetriesRequestThenDoesNotDisposeRequestContent()
+    {
+        var bodies = new List<string>();
+
+        var handler = new RecordingBodyHttpMessageHandler(bodies, static attempt => attempt == 1 ? HttpStatusCode.InternalServerError : HttpStatusCode.OK);
+
+        using var client = CreateClient(handler, bufferRequestContent: false);
+        using var content = new StringContent("payload");
+
+        using var response = await client.PostAsync("https://example.com", content, TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal(["payload", "payload"], bodies);
+
+        // The caller still owns the content, so it must be usable after the retried request completed.
+        Assert.Equal("payload", await content.ReadAsStringAsync(TestContext.Current.CancellationToken));
+    }
+
+    [Fact]
+    public async Task WhenHttpRetryDelegatingHandlerDoesNotCloneRequestThenEveryAttemptUsesTheSameRequestInstance()
+    {
+        var requests = new List<HttpRequestMessage>();
+
+        var handler = new RecordingHttpMessageHandler(requests, static attempt => attempt == 1 ? HttpStatusCode.InternalServerError : HttpStatusCode.OK);
+
+        using var client = CreateClient(handler, cloneRequest: false);
+        using var request = new HttpRequestMessage(HttpMethod.Get, "https://example.com");
+
+        using var response = await client.SendAsync(request, TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Same(request, Assert.Single(requests.Distinct()));
+    }
+
+    [Fact]
+    public async Task WhenHttpRetryDelegatingHandlerClonesRequestThenInnerHandlerMutationsDoNotLeakIntoNextAttempt()
+    {
+        var requests = new List<HttpRequestMessage>();
+
+        var handler = new RecordingHttpMessageHandler(requests, static attempt => attempt == 1 ? HttpStatusCode.InternalServerError : HttpStatusCode.OK)
+        {
+            OnRequest = static request => request.Headers.Add("X-Attempt", "1")
+        };
+
+        using var client = CreateClient(handler, cloneRequest: true);
+        using var request = new HttpRequestMessage(HttpMethod.Get, "https://example.com");
+
+        using var response = await client.SendAsync(request, TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal(2, requests.Distinct().Count());
+        Assert.All(requests, attemptRequest => Assert.Single(attemptRequest.Headers.GetValues("X-Attempt")));
+        Assert.False(request.Headers.Contains("X-Attempt"));
+    }
+
+    private static HttpClient CreateClient(HttpMessageHandler innerHandler, bool bufferRequestContent = false, bool cloneRequest = false)
+    {
+        var options = new RetryPolicyOptions
+        {
+            MaxRetryCount = 1,
+            RetryDelay = TimeSpan.Zero,
+            ShouldHandle = HttpRetryDelegatingHandler.ShouldHandle,
+            OnResultDiscarded = HttpRetryDelegatingHandler.DisposeDiscardedResponse
+        };
+
+        var services = new ServiceCollection().BuildServiceProvider();
+        var executor = new DefaultRetryExecutor(options, services, NullLoggerFactory.Instance);
+
+        return new HttpClient(new HttpRetryDelegatingHandler(executor, bufferRequestContent, cloneRequest) { InnerHandler = innerHandler });
+    }
+
     private sealed class SequenceHttpMessageHandler(Func<int, HttpResponseMessage> createResponse) : HttpMessageHandler
     {
         public int SendCount { get; private set; }
@@ -337,6 +441,40 @@ public class HttpRetryDelegatingHandlerTests
 
             return new(HttpStatusCode.OK);
         }
+    }
+
+    private sealed class RecordingHttpMessageHandler(List<HttpRequestMessage> requests, Func<int, HttpStatusCode> getStatusCode) : HttpMessageHandler
+    {
+        private int sendCount;
+
+        public Action<HttpRequestMessage>? OnRequest { get; init; }
+
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            sendCount++;
+            OnRequest?.Invoke(request);
+            requests.Add(request);
+
+            return Task.FromResult(new HttpResponseMessage(getStatusCode(sendCount)));
+        }
+    }
+
+    private sealed class RecordingBodyHttpMessageHandler(List<string> bodies, Func<int, HttpStatusCode> getStatusCode) : HttpMessageHandler
+    {
+        private int sendCount;
+
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            sendCount++;
+            bodies.Add(await request.Content!.ReadAsStringAsync(cancellationToken));
+
+            return new(getStatusCode(sendCount));
+        }
+    }
+
+    private sealed class NonSeekableStream(byte[] content) : MemoryStream(content)
+    {
+        public override bool CanSeek => false;
     }
 
     private sealed class TrackingHttpContent : HttpContent

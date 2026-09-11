@@ -23,7 +23,7 @@ internal class DefaultRetryExecutor(RetryPolicyOptions options, IServiceProvider
             }
             catch (Exception exception) when (ShouldRetry(RetryOutcome.FromException(exception), attempt))
             {
-                await WaitForNextAttemptAsync(++attempt, RetryOutcome.FromException(exception), cancellationToken).ConfigureAwait(false);
+                await WaitForNextAttemptAsync(RetryOutcome.FromException(exception), ++attempt, cancellationToken).ConfigureAwait(false);
             }
         }
     }
@@ -58,7 +58,7 @@ internal class DefaultRetryExecutor(RetryPolicyOptions options, IServiceProvider
                 outcome = RetryOutcome.FromException(exception);
             }
 
-            await WaitForNextAttemptAsync(++attempt, outcome, cancellationToken).ConfigureAwait(false);
+            await WaitForNextAttemptAsync(outcome, ++attempt, cancellationToken).ConfigureAwait(false);
         }
     }
 
@@ -101,7 +101,7 @@ internal class DefaultRetryExecutor(RetryPolicyOptions options, IServiceProvider
     private bool ShouldRetry(RetryOutcome outcome, int attempt)
         => attempt < options.MaxRetryCount && (outcome.Exception is RetryTimeoutException || (options.ShouldHandle?.Invoke(outcome) ?? true));
 
-    private async Task WaitForNextAttemptAsync(int attempt, RetryOutcome outcome, CancellationToken cancellationToken)
+    private async Task WaitForNextAttemptAsync(RetryOutcome outcome, int attempt, CancellationToken cancellationToken)
     {
         var retryDelay = options.RetryDelayGenerator?.Invoke(outcome) ?? GetRetryDelay(attempt);
 
