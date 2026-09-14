@@ -90,7 +90,7 @@ internal sealed class HttpRetryDelegatingHandler(IRetryExecutor executor, bool b
     internal static bool ShouldHandle(RetryOutcome outcome) => outcome switch
     {
         { Exception: HttpRequestException or RetryTimeoutException } => true,
-        { Result: HttpResponseMessage response } => response.StatusCode is HttpStatusCode.RequestTimeout or HttpStatusCode.TooManyRequests || (int)response.StatusCode >= 500,
+        { Result: HttpResponseMessage response } => response.StatusCode is HttpStatusCode.RequestTimeout or HttpStatusCode.TooManyRequests or >= HttpStatusCode.InternalServerError,
         _ => false
     };
 

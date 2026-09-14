@@ -1,3 +1,5 @@
+using System.Diagnostics.CodeAnalysis;
+
 namespace SimpleRetry;
 
 /// <summary>
@@ -30,6 +32,7 @@ public readonly struct RetryOutcome
     /// <summary>
     /// Gets a value indicating whether the operation failed with an exception.
     /// </summary>
+    [MemberNotNullWhen(true, nameof(Exception))]
     public bool IsException => Exception is not null;
 
     /// <summary>
