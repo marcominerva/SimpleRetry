@@ -600,7 +600,7 @@ public partial class DefaultRetryExecutorExecuteAsyncTests
     }
 
     private static DefaultRetryExecutor CreateExecutor(RetryPolicyOptions options)
-        => new(options, serviceProvider: NullServiceProvider.Instance, NullLoggerFactory.Instance);
+        => new(options, NullServiceProvider.Instance, NullLoggerFactory.Instance);
 
     private sealed class NullServiceProvider : IServiceProvider
     {
