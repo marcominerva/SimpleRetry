@@ -7,9 +7,33 @@ namespace SimpleRetry.UnitTests;
 public class HttpRetryDelegatingHandlerTests
 {
     [Fact]
+    public async Task WhenHttpRetryDelegatingHandlerReceivesSuccessfulStatusThenSendsRequestOnce()
+    {
+        var handler = new SequenceHttpMessageHandler(static _ => new(HttpStatusCode.OK));
+
+        var services = new ServiceCollection();
+
+        services.AddHttpClient("test")
+            .ConfigurePrimaryHttpMessageHandler(() => handler)
+            .AddHttpSimpleRetry(options =>
+            {
+                options.MaxRetryCount = 1;
+                options.RetryDelay = TimeSpan.Zero;
+            });
+
+        await using var serviceProvider = services.BuildServiceProvider();
+        var httpClientFactory = serviceProvider.GetRequiredService<IHttpClientFactory>();
+
+        using var response = await httpClientFactory.CreateClient("test").GetAsync("https://example.com", TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal(1, handler.SendCount);
+    }
+
+    [Fact]
     public async Task WhenHttpRetryDelegatingHandlerReceivesTransientStatusThenRetriesRequest()
     {
-        var handler = new SequenceHttpMessageHandler(static attempt => attempt == 1 ? new(HttpStatusCode.InternalServerError) : new(HttpStatusCode.OK));
+        var handler = new SequenceHttpMessageHandler(static attempt => attempt == 1 ? new(HttpStatusCode.GatewayTimeout) : new(HttpStatusCode.OK));
 
         var services = new ServiceCollection();
 

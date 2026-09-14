@@ -30,7 +30,7 @@ namespace SimpleRetry;
 /// retried when <paramref name="bufferRequestContent"/> materializes it in memory beforehand.
 /// </para>
 /// </remarks>
-internal sealed class HttpRetryDelegatingHandler(IRetryExecutor executor, bool bufferRequestContent = false, bool cloneRequest = false) : DelegatingHandler
+internal class HttpRetryDelegatingHandler(IRetryExecutor executor, bool bufferRequestContent = false, bool cloneRequest = false) : DelegatingHandler
 {
     protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
     {
