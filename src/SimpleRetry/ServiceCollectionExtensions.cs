@@ -10,6 +10,66 @@ namespace SimpleRetry;
 /// </summary>
 public static class ServiceCollectionExtensions
 {
+    extension(IHttpClientBuilder builder)
+    {
+        /// <summary>
+        /// Adds a standard SimpleRetry delegating handler that retries transient HTTP failures.
+        /// </summary>
+        /// <returns>The HTTP client builder for chaining additional registrations.</returns>
+        public IHttpClientBuilder AddHttpSimpleRetry()
+            => builder.AddHttpSimpleRetry(static _ => { });
+
+        /// <summary>
+        /// Adds a standard SimpleRetry delegating handler that retries transient HTTP failures.
+        /// </summary>
+        /// <param name="configure">The callback used to configure the retry policy.</param>
+        /// <returns>The HTTP client builder for chaining additional registrations.</returns>
+        public IHttpClientBuilder AddHttpSimpleRetry(Action<RetryPolicyOptions> configure)
+        {
+            ArgumentNullException.ThrowIfNull(builder);
+            ArgumentNullException.ThrowIfNull(configure);
+
+            return builder.AddHttpSimpleRetry((_, options) => configure(options));
+        }
+
+        /// <summary>
+        /// Adds a standard SimpleRetry delegating handler that retries transient HTTP failures using configuration that can resolve services from the provider.
+        /// </summary>
+        /// <param name="configure">The callback used to configure the retry policy.</param>
+        /// <returns>The HTTP client builder for chaining additional registrations.</returns>
+        /// <remarks>
+        /// The retry policy is registered as a keyed service using the HTTP client name, so the very same
+        /// <see cref="IRetryExecutor"/> that runs standalone operations also drives the HTTP pipeline.
+        /// </remarks>
+        public IHttpClientBuilder AddHttpSimpleRetry(Action<IServiceProvider, RetryPolicyOptions> configure)
+        {
+            ArgumentNullException.ThrowIfNull(builder);
+            ArgumentNullException.ThrowIfNull(configure);
+
+            builder.Services.AddKeyedSingleton(builder.Name, (services, _) =>
+            {
+                var options = new RetryPolicyOptions()
+                {
+                    AttemptTimeout = TimeSpan.FromSeconds(10),
+                    BackoffType = BackoffType.Exponential,
+                    RetryDelay = TimeSpan.FromSeconds(2),
+                    RetryDelayGenerator = HttpRetryDelegatingHandler.GetRetryAfterDelay,
+                    ShouldHandle = HttpRetryDelegatingHandler.ShouldHandle,
+                    OnResultDiscarded = HttpRetryDelegatingHandler.DisposeDiscardedResponse
+                };
+
+                configure(services, options);
+                return options;
+            });
+
+            AddRetryExecutor(builder.Services);
+
+            builder.AddHttpMessageHandler(services => new HttpRetryDelegatingHandler(services.GetRequiredKeyedService<IRetryExecutor>(builder.Name)));
+
+            return builder;
+        }
+    }
+
     extension(IServiceCollection services)
     {
         /// <summary>
@@ -23,11 +83,7 @@ public static class ServiceCollectionExtensions
             ArgumentNullException.ThrowIfNull(services);
             ArgumentNullException.ThrowIfNull(configure);
 
-            var options = new RetryPolicyOptions();
-            configure(options);
-
-            services.AddKeyedSingleton(serviceKey, options);
-            AddRetryExecutor(services);
+            services.AddSimpleRetry(serviceKey, (_, options) => configure(options));
 
             return services;
         }
