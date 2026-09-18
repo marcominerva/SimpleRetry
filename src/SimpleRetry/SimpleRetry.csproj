@@ -59,5 +59,4 @@
     <ItemGroup>
         <InternalsVisibleTo Include="SimpleRetry.UnitTests" />
     </ItemGroup>
-
 </Project>

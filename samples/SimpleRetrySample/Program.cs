@@ -34,6 +34,11 @@ builder.Services.AddSimpleRetry("MyPolicy1", options =>
     };
 });
 
+builder.Services.AddHttpClient("MyHttpClient", client =>
+{
+    client.BaseAddress = new Uri("https://example.com");
+}).AddSimpleRetry();
+
 builder.Services.AddDefaultProblemDetails();
 builder.Services.AddDefaultExceptionHandler();
 

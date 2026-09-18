@@ -3,24 +3,47 @@ using System.Net.Http.Headers;
 
 namespace SimpleRetry;
 
-internal sealed class HttpRetryDelegatingHandler(IRetryExecutor executor) : DelegatingHandler
+internal sealed class HttpRetryDelegatingHandler(IRetryExecutor executor, bool bufferRequestContent = false,
+    bool cloneRequest = false) : DelegatingHandler
 {
     protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(request);
 
-        // The original HttpRequestMessage may contain HttpContent that is read and consumed during the first send.
-        // Because the same request can be retried, capture the body bytes and headers before the first attempt so
-        // each retry can create a new HttpContent instance instead of reusing content that may already be consumed.
-        var requestContent = request.Content is null ? null : await RequestContentSnapshot.CreateAsync(request.Content, cancellationToken).ConfigureAwait(false);
+        if (request.Content is StreamContent content)
+        {
+            if (!bufferRequestContent)
+            {
+                throw new InvalidOperationException("Cannot retry requests with non-buffered stream content. Enable buffering or use a different content type.");
+            }
+
+#if NET9_0_OR_GREATER
+            await content.LoadIntoBufferAsync(cancellationToken).ConfigureAwait(false);
+#else
+            await content.LoadIntoBufferAsync().WaitAsync(cancellationToken).ConfigureAwait(false);
+#endif
+        }
 
         return await executor.ExecuteAsync(async attemptCancellationToken =>
         {
+            if (!cloneRequest)
+            { 
+                return await base.SendAsync(request, attemptCancellationToken).ConfigureAwait(false);
+            }
+
             // HttpRequestMessage instances are single-use in the HTTP pipeline. Each retry must send a new request
             // instance that preserves the original method, URI, headers, options, version, and a fresh copy of the body.
-            using var attemptRequest = CloneRequest(request, requestContent);
+            var attemptRequest = CloneRequest(request);
 
-            return await base.SendAsync(attemptRequest, attemptCancellationToken).ConfigureAwait(false);
+            try
+            { 
+                return await base.SendAsync(attemptRequest, attemptCancellationToken).ConfigureAwait(false);
+            }
+            finally
+            {
+                attemptRequest.Content = null;
+                attemptRequest.Dispose();
+            }
         }, cancellationToken).ConfigureAwait(false);
     }
 
@@ -73,11 +96,11 @@ internal sealed class HttpRetryDelegatingHandler(IRetryExecutor executor) : Dele
     internal static void DisposeDiscardedResponse(RetryOutcome outcome)
         => (outcome.Result as HttpResponseMessage)?.Dispose();
 
-    private static HttpRequestMessage CloneRequest(HttpRequestMessage request, RequestContentSnapshot? requestContent)
+    private static HttpRequestMessage CloneRequest(HttpRequestMessage request)
     {
         var clone = new HttpRequestMessage(request.Method, request.RequestUri)
         {
-            Content = requestContent?.CreateContent(),
+            Content = request.Content,
             Version = request.Version,
             VersionPolicy = request.VersionPolicy
         };
@@ -93,23 +116,5 @@ internal sealed class HttpRetryDelegatingHandler(IRetryExecutor executor) : Dele
         }
 
         return clone;
-    }
-
-    private sealed class RequestContentSnapshot(byte[] content, HttpContentHeaders headers)
-    {
-        public static async Task<RequestContentSnapshot> CreateAsync(HttpContent content, CancellationToken cancellationToken)
-            => new(await content.ReadAsByteArrayAsync(cancellationToken).ConfigureAwait(false), content.Headers);
-
-        public HttpContent CreateContent()
-        {
-            var clone = new ByteArrayContent(content);
-
-            foreach (var header in headers)
-            {
-                clone.Headers.TryAddWithoutValidation(header.Key, header.Value);
-            }
-
-            return clone;
-        }
     }
 }
