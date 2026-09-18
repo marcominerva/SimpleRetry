@@ -19,7 +19,7 @@ It provides an `IRetryExecutor` service that can retry failed operations, retry 
 - Dispose or otherwise release returned results that are discarded before a retry.
 - Run custom logic before each retry with `OnRetry`.
 - Register multiple keyed retry policies with dependency injection.
-- Add retry support to `HttpClient` with `AddHttpSimpleRetry`.
+- Add retry support to `HttpClient` with `AddSimpleRetry`.
 
 ## Configuration
 
@@ -223,14 +223,14 @@ The callback is invoked only for handled results. Exceptions are not reported th
 
 ## HTTP retries
 
-Use `AddHttpSimpleRetry` to add the built-in HTTP retry handler to an `HttpClient`:
+Use `AddSimpleRetry` to add the built-in HTTP retry handler to an `HttpClient`:
 
 ```csharp
 builder.Services.AddHttpClient("ExternalApi", client =>
 {
     client.BaseAddress = new("https://example.com");
 })
-.AddHttpSimpleRetry(options =>
+.AddSimpleRetry(options =>
 {
     options.MaxRetryCount = 3;
 });

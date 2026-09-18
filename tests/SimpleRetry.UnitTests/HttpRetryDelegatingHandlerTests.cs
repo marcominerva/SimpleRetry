@@ -1,185 +1,517 @@
 using System.Net;
-using System.Net.Http.Headers;
-using NSubstitute;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace SimpleRetry.UnitTests;
 
 public class HttpRetryDelegatingHandlerTests
 {
+    [Fact]
+    public async Task WhenHttpRetryDelegatingHandlerReceivesSuccessfulStatusThenSendsRequestOnce()
+    {
+        var handler = new SequenceHttpMessageHandler(static _ => new(HttpStatusCode.OK));
+
+        var services = new ServiceCollection();
+
+        services.AddHttpClient("test")
+            .ConfigurePrimaryHttpMessageHandler(() => handler)
+            .AddSimpleRetry(options =>
+            {
+                options.MaxRetryCount = 1;
+                options.RetryDelay = TimeSpan.Zero;
+            });
+
+        await using var serviceProvider = services.BuildServiceProvider();
+        var httpClientFactory = serviceProvider.GetRequiredService<IHttpClientFactory>();
+
+        using var response = await httpClientFactory.CreateClient("test").GetAsync("https://example.com", TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal(1, handler.SendCount);
+    }
+
+    [Fact]
+    public async Task WhenHttpRetryDelegatingHandlerReceivesTransientStatusThenRetriesRequest()
+    {
+        var handler = new SequenceHttpMessageHandler(static attempt => attempt == 1 ? new(HttpStatusCode.GatewayTimeout) : new(HttpStatusCode.OK));
+
+        var services = new ServiceCollection();
+
+        services.AddHttpClient("test")
+            .ConfigurePrimaryHttpMessageHandler(() => handler)
+            .AddSimpleRetry(options =>
+            {
+                options.MaxRetryCount = 1;
+                options.RetryDelay = TimeSpan.Zero;
+            });
+
+        await using var serviceProvider = services.BuildServiceProvider();
+        var httpClientFactory = serviceProvider.GetRequiredService<IHttpClientFactory>();
+
+        using var response = await httpClientFactory.CreateClient("test").GetAsync("https://example.com", TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal(2, handler.SendCount);
+    }
+
+    [Fact]
+    public async Task WhenHttpRetryDelegatingHandlerReceivesRequestTimeoutThenRetriesRequest()
+    {
+        var handler = new SequenceHttpMessageHandler(static attempt => attempt == 1 ? new(HttpStatusCode.RequestTimeout) : new(HttpStatusCode.OK));
+
+        var services = new ServiceCollection();
+
+        services.AddHttpClient("test")
+            .ConfigurePrimaryHttpMessageHandler(() => handler)
+            .AddSimpleRetry(options =>
+            {
+                options.MaxRetryCount = 1;
+                options.RetryDelay = TimeSpan.Zero;
+            });
+
+        await using var serviceProvider = services.BuildServiceProvider();
+        var httpClientFactory = serviceProvider.GetRequiredService<IHttpClientFactory>();
+
+        using var response = await httpClientFactory.CreateClient("test").GetAsync("https://example.com", TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal(2, handler.SendCount);
+    }
+
+    [Fact]
+    public async Task WhenHttpRetryDelegatingHandlerReceivesTooManyRequestsWithRetryAfterThenUsesRetryAfterDelay()
+    {
+        var retryDelay = TimeSpan.FromDays(1);
+        var retryAfterDelay = TimeSpan.FromSeconds(5);
+        var observedDelays = new List<TimeSpan>();
+
+        var handler = new SequenceHttpMessageHandler(attempt =>
+        {
+            var response = attempt == 1 ? new HttpResponseMessage(HttpStatusCode.TooManyRequests) : new HttpResponseMessage(HttpStatusCode.OK);
+
+            if (attempt == 1)
+            {
+                response.Headers.RetryAfter = new(retryAfterDelay);
+            }
+
+            return response;
+        });
+        var services = new ServiceCollection();
+
+        services.AddHttpClient("test")
+            .ConfigurePrimaryHttpMessageHandler(() => handler)
+            .AddSimpleRetry(options =>
+            {
+                options.MaxRetryCount = 1;
+                options.RetryDelay = retryDelay;
+                options.OnRetry = arguments =>
+                {
+                    observedDelays.Add(arguments.RetryDelay);
+                    return Task.CompletedTask;
+                };
+            });
+
+        await using var serviceProvider = services.BuildServiceProvider();
+        var httpClientFactory = serviceProvider.GetRequiredService<IHttpClientFactory>();
+
+        using var response = await httpClientFactory.CreateClient("test").GetAsync("https://example.com", TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal(2, handler.SendCount);
+
+        var observedDelay = Assert.Single(observedDelays);
+        Assert.Equal(retryAfterDelay, observedDelay);
+    }
+
+    [Fact]
+    public async Task WhenHttpRetryDelegatingHandlerReceivesHttpRequestExceptionThenRetriesRequest()
+    {
+        var handler = new SequenceHttpMessageHandler(static attempt => attempt == 1 ? throw new HttpRequestException() : new(HttpStatusCode.OK));
+        var services = new ServiceCollection();
+
+        services.AddHttpClient("test")
+            .ConfigurePrimaryHttpMessageHandler(() => handler)
+            .AddSimpleRetry(options =>
+            {
+                options.MaxRetryCount = 1;
+                options.RetryDelay = TimeSpan.Zero;
+            });
+
+        await using var serviceProvider = services.BuildServiceProvider();
+        var httpClientFactory = serviceProvider.GetRequiredService<IHttpClientFactory>();
+
+        using var response = await httpClientFactory.CreateClient("test").GetAsync("https://example.com", TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal(2, handler.SendCount);
+    }
+
+    [Fact]
+    public async Task WhenHttpRetryDelegatingHandlerRetriesRequestThenDisposesDiscardedResponse()
+    {
+        var discardedContent = new TrackingHttpContent();
+
+        var handler = new SequenceHttpMessageHandler(attempt => attempt == 1 ? new(HttpStatusCode.InternalServerError) { Content = discardedContent }
+            : new(HttpStatusCode.OK));
+
+        var services = new ServiceCollection();
+
+        services.AddHttpClient("test")
+            .ConfigurePrimaryHttpMessageHandler(() => handler)
+            .AddSimpleRetry(options =>
+            {
+                options.MaxRetryCount = 1;
+                options.RetryDelay = TimeSpan.Zero;
+            });
+
+        await using var serviceProvider = services.BuildServiceProvider();
+        var httpClientFactory = serviceProvider.GetRequiredService<IHttpClientFactory>();
+
+        using var response = await httpClientFactory.CreateClient("test").GetAsync("https://example.com", TestContext.Current.CancellationToken);
+
+        Assert.True(discardedContent.IsDisposed);
+    }
+
+    [Fact]
+    public async Task WhenMultipleHttpClientsAreRegisteredThenEachUsesItsOwnRetryPolicy()
+    {
+        var retryingHandler = new SequenceHttpMessageHandler(static attempt => attempt == 1 ? new(HttpStatusCode.InternalServerError) : new(HttpStatusCode.OK));
+        var nonRetryingHandler = new SequenceHttpMessageHandler(static _ => new(HttpStatusCode.InternalServerError));
+
+        var services = new ServiceCollection();
+
+        services.AddHttpClient("retrying")
+            .ConfigurePrimaryHttpMessageHandler(() => retryingHandler)
+            .AddSimpleRetry(options =>
+            {
+                options.MaxRetryCount = 1;
+                options.RetryDelay = TimeSpan.Zero;
+            });
+
+        services.AddHttpClient("non-retrying")
+            .ConfigurePrimaryHttpMessageHandler(() => nonRetryingHandler)
+            .AddSimpleRetry(options => options.MaxRetryCount = 0);
+
+        await using var serviceProvider = services.BuildServiceProvider();
+        var httpClientFactory = serviceProvider.GetRequiredService<IHttpClientFactory>();
+
+        using var retryingResponse = await httpClientFactory.CreateClient("retrying").GetAsync("https://example.com", TestContext.Current.CancellationToken);
+        using var nonRetryingResponse = await httpClientFactory.CreateClient("non-retrying").GetAsync("https://example.com", TestContext.Current.CancellationToken);
+
+        Assert.Equal(2, retryingHandler.SendCount);
+        Assert.Equal(1, nonRetryingHandler.SendCount);
+    }
+
+    [Fact]
+    public async Task WhenHttpRetryDelegatingHandlerAttemptTimeoutExpiresThenRetriesRequest()
+    {
+        var attemptTimeout = TimeSpan.FromMilliseconds(100);
+        var handler = new DelayingHttpMessageHandler(attempt => attempt == 1 ? Timeout.InfiniteTimeSpan : TimeSpan.Zero);
+
+        var services = new ServiceCollection();
+
+        services.AddHttpClient("test")
+            .ConfigurePrimaryHttpMessageHandler(() => handler)
+            .AddSimpleRetry(options =>
+            {
+                options.MaxRetryCount = 1;
+                options.RetryDelay = TimeSpan.Zero;
+                options.AttemptTimeout = attemptTimeout;
+            });
+
+        await using var serviceProvider = services.BuildServiceProvider();
+        var httpClientFactory = serviceProvider.GetRequiredService<IHttpClientFactory>();
+
+        var httpClient = httpClientFactory.CreateClient("test");
+        httpClient.Timeout = Timeout.InfiniteTimeSpan;
+
+        using var response = await httpClient.GetAsync("https://example.com", TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal(2, handler.SendCount);
+    }
+
+    [Fact]
+    public async Task WhenHttpRetryDelegatingHandlerAttemptTimeoutIsExhaustedThenThrowsRetryTimeoutException()
+    {
+        var attemptTimeout = TimeSpan.FromMilliseconds(100);
+        var handler = new DelayingHttpMessageHandler(static _ => Timeout.InfiniteTimeSpan);
+
+        var services = new ServiceCollection();
+
+        services.AddHttpClient("test")
+            .ConfigurePrimaryHttpMessageHandler(() => handler)
+            .AddSimpleRetry(options =>
+            {
+                options.MaxRetryCount = 1;
+                options.RetryDelay = TimeSpan.Zero;
+                options.AttemptTimeout = attemptTimeout;
+            });
+
+        await using var serviceProvider = services.BuildServiceProvider();
+        var httpClientFactory = serviceProvider.GetRequiredService<IHttpClientFactory>();
+
+        var httpClient = httpClientFactory.CreateClient("test");
+        httpClient.Timeout = Timeout.InfiniteTimeSpan;
+
+        var exception = await Assert.ThrowsAsync<RetryTimeoutException>(() => httpClient.GetAsync("https://example.com", TestContext.Current.CancellationToken));
+
+        Assert.Equal(attemptTimeout, exception.Timeout);
+        Assert.Equal(2, handler.SendCount);
+    }
+
+    [Fact]
+    public async Task WhenHttpRetryDelegatingHandlerReceivesRetryAfterDateThenUsesRetryAfterDelay()
+    {
+        var retryAfterDate = DateTimeOffset.UtcNow.AddSeconds(30);
+        var observedDelays = new List<TimeSpan>();
+
+        var handler = new SequenceHttpMessageHandler(attempt =>
+        {
+            var response = new HttpResponseMessage(attempt == 1 ? HttpStatusCode.ServiceUnavailable : HttpStatusCode.OK);
+
+            if (attempt == 1)
+            {
+                response.Headers.RetryAfter = new(retryAfterDate);
+            }
+
+            return response;
+        });
+
+        var services = new ServiceCollection();
+
+        services.AddHttpClient("test")
+            .ConfigurePrimaryHttpMessageHandler(() => handler)
+            .AddSimpleRetry(options =>
+            {
+                options.MaxRetryCount = 1;
+                options.RetryDelay = TimeSpan.FromDays(1);
+                options.OnRetry = arguments =>
+                {
+                    observedDelays.Add(arguments.RetryDelay);
+                    return Task.CompletedTask;
+                };
+            });
+
+        await using var serviceProvider = services.BuildServiceProvider();
+        var httpClientFactory = serviceProvider.GetRequiredService<IHttpClientFactory>();
+
+        using var response = await httpClientFactory.CreateClient("test").GetAsync("https://example.com", TestContext.Current.CancellationToken);
+
+        var observedDelay = Assert.Single(observedDelays);
+        Assert.InRange(observedDelay, TimeSpan.FromSeconds(20), TimeSpan.FromSeconds(30));
+    }
+
     [Theory]
-    [InlineData(HttpStatusCode.RequestTimeout, true)]
-    [InlineData(HttpStatusCode.TooManyRequests, true)]
-    [InlineData(HttpStatusCode.InternalServerError, true)]
-    [InlineData(HttpStatusCode.BadGateway, true)]
-    [InlineData(HttpStatusCode.OK, false)]
-    [InlineData(HttpStatusCode.BadRequest, false)]
-    public void ShouldHandle_WhenOutcomeContainsResponse_ReturnsExpected(HttpStatusCode statusCode, bool expected)
+    [InlineData(BackoffType.Constant, 2, 2, 2)]
+    [InlineData(BackoffType.Linear, 2, 4, 6)]
+    [InlineData(BackoffType.Exponential, 2, 4, 8)]
+    public async Task WhenHttpRetryDelegatingHandlerReceivesNoRetryAfterThenUsesConfiguredBackoff(BackoffType backoffType, int firstDelayMilliseconds, int secondDelayMilliseconds, int thirdDelayMilliseconds)
     {
-        using var response = new HttpResponseMessage(statusCode);
-        Assert.Equal(expected, HttpRetryDelegatingHandler.ShouldHandle(RetryOutcome.FromResult(response)));
+        var observedDelays = new List<TimeSpan>();
+        var handler = new SequenceHttpMessageHandler(static attempt => new(attempt <= 3 ? HttpStatusCode.ServiceUnavailable : HttpStatusCode.OK));
+
+        var services = new ServiceCollection();
+
+        services.AddHttpClient("test")
+            .ConfigurePrimaryHttpMessageHandler(() => handler)
+            .AddSimpleRetry(options =>
+            {
+                options.MaxRetryCount = 3;
+                options.RetryDelay = TimeSpan.FromMilliseconds(2);
+                options.BackoffType = backoffType;
+                options.OnRetry = arguments =>
+                {
+                    observedDelays.Add(arguments.RetryDelay);
+                    return Task.CompletedTask;
+                };
+            });
+
+        await using var serviceProvider = services.BuildServiceProvider();
+        var httpClientFactory = serviceProvider.GetRequiredService<IHttpClientFactory>();
+
+        using var response = await httpClientFactory.CreateClient("test").GetAsync("https://example.com", TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal([
+            TimeSpan.FromMilliseconds(firstDelayMilliseconds),
+            TimeSpan.FromMilliseconds(secondDelayMilliseconds),
+            TimeSpan.FromMilliseconds(thirdDelayMilliseconds)
+        ], observedDelays);
     }
 
     [Fact]
-    public void ShouldHandle_WhenOutcomeContainsException_HandlesOnlyTransientExceptions()
+    public async Task WhenHttpRetryDelegatingHandlerReceivesStreamContentWithoutBufferingThenThrowsInvalidOperationException()
     {
-        Assert.True(HttpRetryDelegatingHandler.ShouldHandle(RetryOutcome.FromException(new HttpRequestException())));
-        Assert.True(HttpRetryDelegatingHandler.ShouldHandle(RetryOutcome.FromException(new RetryTimeoutException(TimeSpan.Zero))));
-        Assert.False(HttpRetryDelegatingHandler.ShouldHandle(RetryOutcome.FromException(new InvalidOperationException())));
-        Assert.False(HttpRetryDelegatingHandler.ShouldHandle(RetryOutcome.FromResult("not an HTTP response")));
+        var handler = new SequenceHttpMessageHandler(static _ => new(HttpStatusCode.OK));
+
+        using var client = CreateClient(handler, bufferRequestContent: false);
+        using var content = new StreamContent(new MemoryStream("payload"u8.ToArray()));
+
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(()
+            => client.PostAsync("https://example.com", content, TestContext.Current.CancellationToken));
+
+        Assert.Contains(nameof(StreamContent), exception.Message);
+        Assert.Equal(0, handler.SendCount);
     }
 
     [Fact]
-    public void GetRetryAfterDelay_WhenDeltaIsPresent_ReturnsNonNegativeDelta()
+    public async Task WhenHttpRetryDelegatingHandlerBuffersStreamContentThenEveryAttemptSendsTheSameBody()
     {
-        using var futureResponse = new HttpResponseMessage();
-        futureResponse.Headers.RetryAfter = new RetryConditionHeaderValue(TimeSpan.FromSeconds(12));
-        using var pastResponse = new HttpResponseMessage();
-        pastResponse.Headers.RetryAfter = new RetryConditionHeaderValue(TimeSpan.FromSeconds(-1));
-        Assert.Equal(TimeSpan.FromSeconds(12), HttpRetryDelegatingHandler.GetRetryAfterDelay(RetryOutcome.FromResult(futureResponse)));
-        Assert.Equal(TimeSpan.Zero, HttpRetryDelegatingHandler.GetRetryAfterDelay(RetryOutcome.FromResult(pastResponse)));
+        var bodies = new List<string>();
+
+        var handler = new RecordingBodyHttpMessageHandler(bodies, static attempt => attempt == 1 ? HttpStatusCode.InternalServerError : HttpStatusCode.OK);
+
+        using var client = CreateClient(handler, bufferRequestContent: true);
+        using var content = new StreamContent(new NonSeekableStream("payload"u8.ToArray()));
+
+        using var response = await client.PostAsync("https://example.com", content, TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal(["payload", "payload"], bodies);
     }
 
     [Fact]
-    public void GetRetryAfterDelay_WhenHeaderOrResponseIsMissing_ReturnsNull()
+    public async Task WhenHttpRetryDelegatingHandlerRetriesRequestThenDoesNotDisposeRequestContent()
     {
-        using var response = new HttpResponseMessage();
-        Assert.Null(HttpRetryDelegatingHandler.GetRetryAfterDelay(RetryOutcome.FromResult(response)));
-        Assert.Null(HttpRetryDelegatingHandler.GetRetryAfterDelay(RetryOutcome.FromException(new HttpRequestException())));
+        var bodies = new List<string>();
+
+        var handler = new RecordingBodyHttpMessageHandler(bodies, static attempt => attempt == 1 ? HttpStatusCode.InternalServerError : HttpStatusCode.OK);
+
+        using var client = CreateClient(handler, bufferRequestContent: false);
+        using var content = new StringContent("payload");
+
+        using var response = await client.PostAsync("https://example.com", content, TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal(["payload", "payload"], bodies);
+
+        // The caller still owns the content, so it must be usable after the retried request completed.
+        Assert.Equal("payload", await content.ReadAsStringAsync(TestContext.Current.CancellationToken));
     }
 
     [Fact]
-    public void GetRetryAfterDelay_WhenDateIsInPast_ReturnsZero()
+    public async Task WhenHttpRetryDelegatingHandlerDoesNotCloneRequestThenEveryAttemptUsesTheSameRequestInstance()
     {
-        using var response = new HttpResponseMessage();
-        response.Headers.RetryAfter = new RetryConditionHeaderValue(DateTimeOffset.UtcNow.AddDays(-1));
-        Assert.Equal(TimeSpan.Zero, HttpRetryDelegatingHandler.GetRetryAfterDelay(RetryOutcome.FromResult(response)));
-    }
+        var requests = new List<HttpRequestMessage>();
 
-    [Fact]
-    public void DisposeDiscardedResponse_WhenOutcomeContainsResponse_DisposesIt()
-    {
-        var content = new TrackingContent();
-        var response = new HttpResponseMessage { Content = content };
-        HttpRetryDelegatingHandler.DisposeDiscardedResponse(RetryOutcome.FromResult(response));
-        HttpRetryDelegatingHandler.DisposeDiscardedResponse(RetryOutcome.FromException(new HttpRequestException()));
-        Assert.True(content.IsDisposed);
-    }
+        var handler = new RecordingHttpMessageHandler(requests, static attempt => attempt == 1 ? HttpStatusCode.InternalServerError : HttpStatusCode.OK);
 
-    [Fact]
-    public async Task SendAsync_WhenCloneIsDisabled_ForwardsOriginalRequest()
-    {
-        var primaryHandler = new RecordingHandler();
-        using var retryHandler = new HttpRetryDelegatingHandler(CreatePassThroughExecutor()) { InnerHandler = primaryHandler };
-        using var client = new HttpClient(retryHandler);
-        using var request = new HttpRequestMessage(HttpMethod.Get, "https://example.test/resource");
+        using var client = CreateClient(handler, cloneRequest: false);
+        using var request = new HttpRequestMessage(HttpMethod.Get, "https://example.com");
 
         using var response = await client.SendAsync(request, TestContext.Current.CancellationToken);
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-        Assert.Same(request, Assert.Single(primaryHandler.Requests));
-        Assert.True(primaryHandler.CancellationTokens.Single().CanBeCanceled);
+        Assert.Same(request, Assert.Single(requests.Distinct()));
     }
 
     [Fact]
-    public async Task SendAsync_WhenCloningRequest_PreservesRequestDataAndContent()
+    public async Task WhenHttpRetryDelegatingHandlerClonesRequestThenInnerHandlerMutationsDoNotLeakIntoNextAttempt()
     {
-        var primaryHandler = new RecordingHandler();
-        using var retryHandler = new HttpRetryDelegatingHandler(CreatePassThroughExecutor(), cloneRequest: true) { InnerHandler = primaryHandler };
-        using var client = new HttpClient(retryHandler);
-        using var content = new StringContent("payload");
-        content.Headers.ContentType = new MediaTypeHeaderValue("application/custom");
-        using var request = new HttpRequestMessage(HttpMethod.Post, "https://example.test/resource")
+        var requests = new List<HttpRequestMessage>();
+
+        var handler = new RecordingHttpMessageHandler(requests, static attempt => attempt == 1 ? HttpStatusCode.InternalServerError : HttpStatusCode.OK)
         {
-            Content = content,
-            Version = HttpVersion.Version20,
-            VersionPolicy = HttpVersionPolicy.RequestVersionOrLower
+            OnRequest = static request => request.Headers.Add("X-Attempt", "1")
         };
-        request.Headers.Add("X-Test", "value");
-        request.Options.Set(new HttpRequestOptionsKey<string>("option"), "option-value");
+
+        using var client = CreateClient(handler, cloneRequest: true);
+        using var request = new HttpRequestMessage(HttpMethod.Get, "https://example.com");
 
         using var response = await client.SendAsync(request, TestContext.Current.CancellationToken);
 
-        var forwarded = Assert.Single(primaryHandler.Requests);
-        Assert.NotSame(request, forwarded);
-        Assert.Equal(request.Method, forwarded.Method);
-        Assert.Equal(request.RequestUri, forwarded.RequestUri);
-        Assert.Equal(request.Version, forwarded.Version);
-        Assert.Equal(request.VersionPolicy, forwarded.VersionPolicy);
-        Assert.Equal("value", Assert.Single(forwarded.Headers.GetValues("X-Test")));
-        Assert.True(forwarded.Options.TryGetValue(new HttpRequestOptionsKey<string>("option"), out var option));
-        Assert.Equal("option-value", option);
-        Assert.Equal("payload", primaryHandler.Bodies.Single());
-        Assert.Equal("application/custom", primaryHandler.ContentTypes.Single());
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal(2, requests.Distinct().Count());
+        Assert.All(requests, attemptRequest => Assert.Single(attemptRequest.Headers.GetValues("X-Attempt")));
+        Assert.False(request.Headers.Contains("X-Attempt"));
     }
 
-    [Fact]
-    public async Task SendAsync_WhenStreamContentIsNotBuffered_ThrowsBeforeExecuting()
+    private static HttpClient CreateClient(HttpMessageHandler innerHandler, bool bufferRequestContent = false, bool cloneRequest = false)
     {
-        var executor = Substitute.For<IRetryExecutor>();
-        using var retryHandler = new HttpRetryDelegatingHandler(executor) { InnerHandler = new RecordingHandler() };
-        using var client = new HttpClient(retryHandler);
-        using var request = new HttpRequestMessage(HttpMethod.Post, "https://example.test")
+        var options = new RetryPolicyOptions
         {
-            Content = new StreamContent(new MemoryStream([1, 2, 3]))
+            MaxRetryCount = 1,
+            RetryDelay = TimeSpan.Zero,
+            ShouldHandle = HttpRetryDelegatingHandler.ShouldHandle,
+            OnResultDiscarded = HttpRetryDelegatingHandler.DisposeDiscardedResponse
         };
 
-        var exception = await Assert.ThrowsAsync<InvalidOperationException>(() => client.SendAsync(request, TestContext.Current.CancellationToken));
+        var services = new ServiceCollection().BuildServiceProvider();
+        var executor = new DefaultRetryExecutor(options, services, NullLoggerFactory.Instance);
 
-        Assert.Contains("Enable buffering", exception.Message);
-        await executor.DidNotReceiveWithAnyArgs().ExecuteAsync<HttpResponseMessage>(default!, TestContext.Current.CancellationToken);
+        return new HttpClient(new HttpRetryDelegatingHandler(executor, bufferRequestContent, cloneRequest) { InnerHandler = innerHandler });
     }
 
-    [Fact]
-    public async Task SendAsync_WhenStreamBufferingIsEnabled_BuffersAndSendsContent()
+    private sealed class SequenceHttpMessageHandler(Func<int, HttpResponseMessage> createResponse) : HttpMessageHandler
     {
-        var primaryHandler = new RecordingHandler();
-        using var retryHandler = new HttpRetryDelegatingHandler(CreatePassThroughExecutor(), bufferRequestContent: true) { InnerHandler = primaryHandler };
-        using var client = new HttpClient(retryHandler);
-        using var request = new HttpRequestMessage(HttpMethod.Post, "https://example.test")
+        public int SendCount { get; private set; }
+
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
-            Content = new StreamContent(new MemoryStream([1, 2, 3]))
-        };
-
-        using var response = await client.SendAsync(request, TestContext.Current.CancellationToken);
-
-        Assert.Equal([1, 2, 3], primaryHandler.BodyBytes.Single());
+            SendCount++;
+            return Task.FromResult(createResponse(SendCount));
+        }
     }
 
-    private static IRetryExecutor CreatePassThroughExecutor()
+    private sealed class DelayingHttpMessageHandler(Func<int, TimeSpan> getDelay) : HttpMessageHandler
     {
-        var executor = Substitute.For<IRetryExecutor>();
-        executor.ExecuteAsync(Arg.Any<Func<CancellationToken, Task<HttpResponseMessage>>>(), Arg.Any<CancellationToken>())
-            .Returns(call => call.Arg<Func<CancellationToken, Task<HttpResponseMessage>>>()(call.ArgAt<CancellationToken>(1)));
-        return executor;
-    }
-
-    private sealed class RecordingHandler : HttpMessageHandler
-    {
-        public List<HttpRequestMessage> Requests { get; } = [];
-        public List<CancellationToken> CancellationTokens { get; } = [];
-        public List<string> Bodies { get; } = [];
-        public List<byte[]> BodyBytes { get; } = [];
-        public List<string?> ContentTypes { get; } = [];
+        public int SendCount { get; private set; }
 
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
-            Requests.Add(request);
-            CancellationTokens.Add(cancellationToken);
-            if (request.Content is not null)
-            {
-                BodyBytes.Add(await request.Content.ReadAsByteArrayAsync(cancellationToken));
-                Bodies.Add(await request.Content.ReadAsStringAsync(cancellationToken));
-                ContentTypes.Add(request.Content.Headers.ContentType?.MediaType);
-            }
+            SendCount++;
+            await Task.Delay(getDelay(SendCount), cancellationToken);
 
             return new(HttpStatusCode.OK);
         }
     }
 
-    private sealed class TrackingContent : ByteArrayContent
+    private sealed class RecordingHttpMessageHandler(List<HttpRequestMessage> requests, Func<int, HttpStatusCode> getStatusCode) : HttpMessageHandler
     {
-        public TrackingContent() : base([]) { }
+        private int sendCount;
+
+        public Action<HttpRequestMessage>? OnRequest { get; init; }
+
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            sendCount++;
+            OnRequest?.Invoke(request);
+            requests.Add(request);
+
+            return Task.FromResult(new HttpResponseMessage(getStatusCode(sendCount)));
+        }
+    }
+
+    private sealed class RecordingBodyHttpMessageHandler(List<string> bodies, Func<int, HttpStatusCode> getStatusCode) : HttpMessageHandler
+    {
+        private int sendCount;
+
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            sendCount++;
+            bodies.Add(await request.Content!.ReadAsStringAsync(cancellationToken));
+
+            return new(getStatusCode(sendCount));
+        }
+    }
+
+    private sealed class NonSeekableStream(byte[] content) : MemoryStream(content)
+    {
+        public override bool CanSeek => false;
+    }
+
+    private sealed class TrackingHttpContent : HttpContent
+    {
         public bool IsDisposed { get; private set; }
+
+        protected override Task SerializeToStreamAsync(Stream stream, TransportContext? context) => Task.CompletedTask;
+
+        protected override bool TryComputeLength(out long length)
+        {
+            length = 0;
+            return true;
+        }
 
         protected override void Dispose(bool disposing)
         {

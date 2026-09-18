@@ -1,12 +1,26 @@
-﻿using Microsoft.Extensions.Logging;
-using NSubstitute;
+﻿using System.Net;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace SimpleRetry.UnitTests;
 
-public class DefaultRetryExecutorTests
+public partial class DefaultRetryExecutorExecuteAsyncTests
 {
     [Fact]
-    public async Task ExecuteAsync_WhenOperationSucceeds_ExecutesOnce()
+    public void RetryPolicyOptionsWhenCreatedThenUsesExpectedDefaults()
+    {
+        var options = new RetryPolicyOptions();
+
+        Assert.Equal(3, options.MaxRetryCount);
+        Assert.Equal(TimeSpan.FromSeconds(2), options.RetryDelay);
+        Assert.Null(options.AttemptTimeout);
+        Assert.Equal(BackoffType.Constant, options.BackoffType);
+        Assert.True(options.ShouldHandle(RetryOutcome.FromException(new InvalidOperationException())));
+        Assert.False(options.ShouldHandle(RetryOutcome.FromResult("result")));
+        Assert.Null(options.OnRetry);
+    }
+
+    [Fact]
+    public async Task WhenOperationSucceedsThenRunsOnce()
     {
         var executor = CreateExecutor(new());
         var attempts = 0;
@@ -21,54 +35,131 @@ public class DefaultRetryExecutorTests
     }
 
     [Fact]
-    public async Task ExecuteAsyncOfT_WhenResultIsNotHandled_ReturnsResult()
-    {
-        var executor = CreateExecutor(new());
-
-        var result = await executor.ExecuteAsync(_ => Task.FromResult(42), TestContext.Current.CancellationToken);
-
-        Assert.Equal(42, result);
-    }
-
-    [Fact]
-    public async Task ExecuteAsync_WhenOperationIsNull_ThrowsArgumentNullException()
-    {
-        var executor = CreateExecutor(new());
-
-        await Assert.ThrowsAsync<ArgumentNullException>(() => executor.ExecuteAsync(null!, TestContext.Current.CancellationToken));
-        await Assert.ThrowsAsync<ArgumentNullException>(() => executor.ExecuteAsync<int>(null!, TestContext.Current.CancellationToken));
-    }
-
-    [Fact]
-    public async Task ExecuteAsync_WhenHandledExceptionOccurs_RetriesUpToLimitAndRethrows()
-    {
-        var exception = new InvalidOperationException("failure");
-        var executor = CreateExecutor(new()
-        {
-            MaxRetryCount = 2,
-            RetryDelay = TimeSpan.Zero,
-            ShouldHandle = outcome => outcome.Exception is InvalidOperationException
-        });
-        var attempts = 0;
-
-        var thrown = await Assert.ThrowsAsync<InvalidOperationException>(() => executor.ExecuteAsync(_ =>
-        {
-            attempts++;
-            return Task.FromException(exception);
-        }, TestContext.Current.CancellationToken));
-
-        Assert.Same(exception, thrown);
-        Assert.Equal(3, attempts);
-    }
-
-    [Fact]
-    public async Task ExecuteAsync_WhenExceptionIsNotHandled_DoesNotRetry()
+    public async Task WhenHandledExceptionIsThrownThenRetriesOperation()
     {
         var executor = CreateExecutor(new()
         {
             MaxRetryCount = 3,
-            ShouldHandle = _ => false
+            RetryDelay = TimeSpan.Zero,
+            ShouldHandle = outcome => outcome.Exception is InvalidOperationException
         });
+
+        var attempts = 0;
+
+        await executor.ExecuteAsync(_ =>
+        {
+            attempts++;
+
+            if (attempts == 1)
+            {
+                throw new InvalidOperationException();
+            }
+
+            return Task.CompletedTask;
+        }, TestContext.Current.CancellationToken);
+
+        Assert.Equal(2, attempts);
+    }
+
+    [Fact]
+    public async Task WhenAttemptTimeoutExpiresThenRetriesOperation()
+    {
+        var handledExceptions = new List<Exception?>();
+        var retryExceptions = new List<Exception?>();
+        var attemptTimeout = TimeSpan.FromSeconds(3);
+        var operationDuration = TimeSpan.FromSeconds(5);
+
+        var executor = CreateExecutor(new()
+        {
+            MaxRetryCount = 1,
+            RetryDelay = TimeSpan.Zero,
+            AttemptTimeout = attemptTimeout,
+            ShouldHandle = outcome =>
+            {
+                handledExceptions.Add(outcome.Exception!);
+                return false;
+            },
+            OnRetry = arguments =>
+            {
+                retryExceptions.Add(arguments.Outcome.Exception);
+                return Task.CompletedTask;
+            }
+        });
+
+        var attempts = 0;
+
+        var exception = await Assert.ThrowsAsync<RetryTimeoutException>(() => executor.ExecuteAsync(cancellationToken =>
+        {
+            attempts++;
+            return Task.Delay(operationDuration, cancellationToken);
+        }, TestContext.Current.CancellationToken));
+
+        Assert.Equal(attemptTimeout, exception.Timeout);
+
+        Assert.Equal(2, attempts);
+        Assert.Empty(handledExceptions);
+
+        var retryException = Assert.Single(retryExceptions);
+        Assert.IsType<RetryTimeoutException>(retryException);
+    }
+
+    [Fact]
+    public async Task WhenAttemptTimeoutExpiresThenCancelsRunningOperation()
+    {
+        var observedCancellation = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        var executor = CreateExecutor(new()
+        {
+            MaxRetryCount = 0,
+            RetryDelay = TimeSpan.Zero,
+            AttemptTimeout = TimeSpan.FromMilliseconds(50)
+        });
+
+        await Assert.ThrowsAsync<RetryTimeoutException>(() => executor.ExecuteAsync(async cancellationToken =>
+        {
+            using var registration = cancellationToken.Register(() => observedCancellation.TrySetResult(true));
+            await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+        }, TestContext.Current.CancellationToken));
+
+        Assert.True(await observedCancellation.Task);
+    }
+
+    [Fact]
+    public async Task WhenCallerCancellationIsSignaledDuringAttemptTimeoutThenDoesNotThrowRetryTimeoutException()
+    {
+        using var cancellationTokenSource = new CancellationTokenSource();
+
+        var executor = CreateExecutor(new()
+        {
+            MaxRetryCount = 3,
+            RetryDelay = TimeSpan.Zero,
+            AttemptTimeout = TimeSpan.FromMinutes(1)
+        });
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => executor.ExecuteAsync(async cancellationToken =>
+        {
+            cancellationTokenSource.Cancel();
+            await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+        }, cancellationTokenSource.Token));
+    }
+
+    [Fact]
+    public async Task WhenMaxRetryCountIsZeroThenDoesNotRetry()
+    {
+        var retryCalled = false;
+
+        var executor = CreateExecutor(new()
+        {
+            MaxRetryCount = 0,
+            RetryDelay = TimeSpan.Zero,
+            ShouldHandle = outcome => outcome.Exception is InvalidOperationException,
+            OnRetry = _ =>
+            {
+                retryCalled = true;
+                return Task.CompletedTask;
+            }
+        });
+
         var attempts = 0;
 
         await Assert.ThrowsAsync<InvalidOperationException>(() => executor.ExecuteAsync(_ =>
@@ -78,164 +169,443 @@ public class DefaultRetryExecutorTests
         }, TestContext.Current.CancellationToken));
 
         Assert.Equal(1, attempts);
+        Assert.False(retryCalled);
     }
 
     [Fact]
-    public async Task ExecuteAsyncOfT_WhenResultIsHandled_DiscardsResultAndRetries()
+    public async Task WhenAttemptTimeoutIsNullThenDoesNotApplyTimeout()
     {
-        var discarded = new List<int>();
-        var attempts = 0;
         var executor = CreateExecutor(new()
         {
             MaxRetryCount = 1,
             RetryDelay = TimeSpan.Zero,
-            ShouldHandle = outcome => outcome.Result is 503,
-            OnResultDiscarded = outcome => discarded.Add(Assert.IsType<int>(outcome.Result))
+            AttemptTimeout = null
         });
 
-        var result = await executor.ExecuteAsync(_ => Task.FromResult(++attempts == 1 ? 503 : 200), TestContext.Current.CancellationToken);
-
-        Assert.Equal(200, result);
-        Assert.Equal([503], discarded);
-    }
-
-    [Fact]
-    public async Task ExecuteAsync_WhenRetrying_ProvidesCallbackContextAndGeneratedDelay()
-    {
-        var serviceProvider = Substitute.For<IServiceProvider>();
-        var loggerFactory = Substitute.For<ILoggerFactory>();
-        OnRetryArguments? callbackArguments = null;
-        var exception = new InvalidOperationException();
-        var options = new RetryPolicyOptions
-        {
-            MaxRetryCount = 1,
-            RetryDelay = TimeSpan.FromDays(1),
-            ShouldHandle = _ => true,
-            RetryDelayGenerator = outcome =>
-            {
-                Assert.Same(exception, outcome.Exception);
-                return TimeSpan.Zero;
-            },
-            OnRetry = arguments =>
-            {
-                callbackArguments = arguments;
-                return Task.CompletedTask;
-            }
-        };
-        var executor = new DefaultRetryExecutor(options, serviceProvider, loggerFactory);
         var attempts = 0;
 
-        await executor.ExecuteAsync(_ => ++attempts == 1 ? Task.FromException(exception) : Task.CompletedTask,
-            TestContext.Current.CancellationToken);
-
-        Assert.NotNull(callbackArguments);
-        Assert.Equal(1, callbackArguments.AttemptNumber);
-        Assert.Equal(1, callbackArguments.MaxRetryCount);
-        Assert.Equal(TimeSpan.Zero, callbackArguments.RetryDelay);
-        Assert.Same(exception, callbackArguments.Outcome.Exception);
-        Assert.Same(serviceProvider, callbackArguments.ServiceProvider);
-        Assert.Same(loggerFactory, callbackArguments.LoggerFactory);
-    }
-
-    [Theory]
-    [InlineData(BackoffType.Constant, 1)]
-    [InlineData(BackoffType.Linear, 2)]
-    [InlineData(BackoffType.Exponential, 2)]
-    public async Task ExecuteAsync_WhenUsingBackoff_ComputesDelayForSecondRetry(BackoffType backoffType, int expectedMultiplier)
-    {
-        using var cancellation = CancellationTokenSource.CreateLinkedTokenSource(TestContext.Current.CancellationToken);
-        var configuredDelay = TimeSpan.FromMilliseconds(10);
-        var observedDelays = new List<TimeSpan>();
-        var executor = CreateExecutor(new()
-        {
-            MaxRetryCount = 2,
-            RetryDelay = configuredDelay,
-            BackoffType = backoffType,
-            OnRetry = arguments =>
-            {
-                observedDelays.Add(arguments.RetryDelay);
-                if (arguments.AttemptNumber == 2)
-                {
-                    cancellation.Cancel();
-                }
-
-                return Task.CompletedTask;
-            }
-        });
-
-        await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
-            executor.ExecuteAsync(_ => Task.FromException(new InvalidOperationException()), cancellation.Token));
-
-        Assert.Equal([configuredDelay, configuredDelay * expectedMultiplier], observedDelays);
-    }
-
-    [Fact]
-    public async Task ExecuteAsync_WhenBackoffTypeIsInvalid_ThrowsInvalidOperationException()
-    {
-        var executor = CreateExecutor(new()
-        {
-            MaxRetryCount = 1,
-            BackoffType = (BackoffType)int.MaxValue
-        });
-
-        var exception = await Assert.ThrowsAsync<InvalidOperationException>(() =>
-            executor.ExecuteAsync(_ => Task.FromException(new InvalidOperationException()), TestContext.Current.CancellationToken));
-
-        Assert.Contains(int.MaxValue.ToString(), exception.Message);
-    }
-
-    [Fact]
-    public async Task ExecuteAsync_WhenCallerCancels_PropagatesCancellationWithoutRetry()
-    {
-        using var cancellation = CancellationTokenSource.CreateLinkedTokenSource(TestContext.Current.CancellationToken);
-        var attempts = 0;
-        var executor = CreateExecutor(new() { MaxRetryCount = 3, RetryDelay = TimeSpan.Zero });
-
-        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => executor.ExecuteAsync(async token =>
+        await executor.ExecuteAsync(async cancellationToken =>
         {
             attempts++;
-            cancellation.Cancel();
-            await Task.Delay(Timeout.InfiniteTimeSpan, token);
-        }, cancellation.Token));
+            await Task.Delay(TimeSpan.FromMilliseconds(50), cancellationToken);
+        }, TestContext.Current.CancellationToken);
 
         Assert.Equal(1, attempts);
     }
 
     [Fact]
-    public async Task ExecuteAsync_WhenAttemptTimesOut_RetriesRegardlessOfPredicate()
+    public async Task WhenOperationThrowsTimeoutExceptionThenUsesShouldHandle()
     {
-        var attempts = 0;
-        RetryOutcome? retryOutcome = null;
-        var timeout = TimeSpan.FromMilliseconds(25);
+        var handledExceptions = new List<Exception>();
+
         var executor = CreateExecutor(new()
         {
             MaxRetryCount = 1,
             RetryDelay = TimeSpan.Zero,
-            AttemptTimeout = timeout,
-            ShouldHandle = _ => false,
+            AttemptTimeout = TimeSpan.FromSeconds(1),
+            ShouldHandle = outcome =>
+            {
+                handledExceptions.Add(outcome.Exception!);
+                return false;
+            }
+        });
+
+        var attempts = 0;
+
+        await Assert.ThrowsAsync<TimeoutException>(() => executor.ExecuteAsync(_ =>
+        {
+            attempts++;
+            throw new TimeoutException();
+        }, TestContext.Current.CancellationToken));
+
+        Assert.Equal(1, attempts);
+
+        var handledException = Assert.Single(handledExceptions);
+        Assert.IsType<TimeoutException>(handledException);
+    }
+
+    [Fact]
+    public async Task WhenShouldHandleThrowsThenPropagatesOriginalException()
+    {
+        var operationException = new InvalidOperationException();
+
+        var executor = CreateExecutor(new()
+        {
+            MaxRetryCount = 1,
+            RetryDelay = TimeSpan.Zero,
+            ShouldHandle = _ => throw new ApplicationException()
+        });
+
+        var attempts = 0;
+
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(() => executor.ExecuteAsync(_ =>
+        {
+            attempts++;
+            throw operationException;
+        }, TestContext.Current.CancellationToken));
+
+        Assert.Same(operationException, exception);
+        Assert.Equal(1, attempts);
+    }
+
+    [Fact]
+    public async Task WhenShouldHandleIsNotConfiguredThenRetriesOperation()
+    {
+        var executor = CreateExecutor(new()
+        {
+            MaxRetryCount = 1,
+            RetryDelay = TimeSpan.Zero
+        });
+
+        var attempts = 0;
+
+        await executor.ExecuteAsync(_ =>
+        {
+            attempts++;
+
+            if (attempts == 1)
+            {
+                throw new InvalidOperationException();
+            }
+
+            return Task.CompletedTask;
+        }, TestContext.Current.CancellationToken);
+
+        Assert.Equal(2, attempts);
+    }
+
+    [Fact]
+    public async Task WhenHandledAndUnhandledExceptionsAreThrownThenRetriesOnlyHandledExceptions()
+    {
+        var retryExceptions = new List<Exception?>();
+
+        var executor = CreateExecutor(new()
+        {
+            MaxRetryCount = 3,
+            RetryDelay = TimeSpan.Zero,
+            ShouldHandle = outcome => outcome.Exception is InvalidOperationException,
             OnRetry = arguments =>
             {
-                retryOutcome = arguments.Outcome;
+                retryExceptions.Add(arguments.Outcome.Exception);
                 return Task.CompletedTask;
             }
         });
 
-        var result = await executor.ExecuteAsync(async token =>
+        var attempts = 0;
+
+        await Assert.ThrowsAsync<NotSupportedException>(() => executor.ExecuteAsync(_ =>
         {
-            if (++attempts == 1)
+            attempts++;
+
+            if (attempts < 3)
             {
-                await Task.Delay(Timeout.InfiniteTimeSpan, token);
+                throw new InvalidOperationException();
             }
 
-            return "completed";
+            throw new NotSupportedException();
+        }, TestContext.Current.CancellationToken));
+
+        Assert.Equal(3, attempts);
+        Assert.All(retryExceptions, exception => Assert.IsType<InvalidOperationException>(exception));
+    }
+
+    [Theory]
+    [InlineData(BackoffType.Constant, 2, 2, 2)]
+    [InlineData(BackoffType.Linear, 2, 4, 6)]
+    [InlineData(BackoffType.Exponential, 2, 4, 8)]
+    public async Task WhenBackoffTypeVariesThenReportsExpectedRetryDelays(BackoffType backoffType, int firstDelayMilliseconds, int secondDelayMilliseconds, int thirdDelayMilliseconds)
+    {
+        var retryDelays = new List<TimeSpan>();
+
+        var executor = CreateExecutor(new()
+        {
+            MaxRetryCount = 3,
+            RetryDelay = TimeSpan.FromMilliseconds(2),
+            BackoffType = backoffType,
+            ShouldHandle = outcome => outcome.Exception is InvalidOperationException,
+            OnRetry = arguments =>
+            {
+                retryDelays.Add(arguments.RetryDelay);
+                return Task.CompletedTask;
+            }
+        });
+
+        var attempts = 0;
+
+        await executor.ExecuteAsync(_ =>
+        {
+            attempts++;
+
+            if (attempts <= 3)
+            {
+                throw new InvalidOperationException();
+            }
+
+            return Task.CompletedTask;
         }, TestContext.Current.CancellationToken);
 
-        Assert.Equal("completed", result);
-        var timeoutException = Assert.IsType<RetryTimeoutException>(retryOutcome?.Exception);
-        Assert.Equal(timeout, timeoutException.Timeout);
-        Assert.IsAssignableFrom<OperationCanceledException>(timeoutException.InnerException);
+        Assert.Equal(4, attempts);
+        Assert.Equal([
+            TimeSpan.FromMilliseconds(firstDelayMilliseconds),
+            TimeSpan.FromMilliseconds(secondDelayMilliseconds),
+            TimeSpan.FromMilliseconds(thirdDelayMilliseconds)
+        ], retryDelays);
+    }
+
+    [Fact]
+    public async Task WhenMaxRetryCountIsGreaterThanOneThenRetriesUntilOperationSucceeds()
+    {
+        var retryAttempts = new List<int>();
+
+        var executor = CreateExecutor(new()
+        {
+            MaxRetryCount = 2,
+            RetryDelay = TimeSpan.Zero,
+            ShouldHandle = outcome => outcome.Exception is InvalidOperationException,
+            OnRetry = arguments =>
+            {
+                retryAttempts.Add(arguments.AttemptNumber);
+                return Task.CompletedTask;
+            }
+        });
+
+        var attempts = 0;
+
+        await executor.ExecuteAsync(_ =>
+        {
+            attempts++;
+
+            if (attempts <= 2)
+            {
+                throw new InvalidOperationException();
+            }
+
+            return Task.CompletedTask;
+        }, TestContext.Current.CancellationToken);
+
+        Assert.Equal(3, attempts);
+        Assert.Equal([1, 2], retryAttempts);
+    }
+
+    [Fact]
+    public async Task WhenRetryIsAttemptedThenPassesExpectedOnRetryArguments()
+    {
+        var retryArguments = new List<OnRetryArguments>();
+        var exceptionToHandle = new InvalidOperationException();
+
+        var executor = CreateExecutor(new()
+        {
+            MaxRetryCount = 2,
+            RetryDelay = TimeSpan.FromMilliseconds(25),
+            ShouldHandle = outcome => ReferenceEquals(outcome.Exception, exceptionToHandle),
+            OnRetry = arguments =>
+            {
+                retryArguments.Add(arguments);
+                return Task.CompletedTask;
+            }
+        });
+
+        var attempts = 0;
+
+        await executor.ExecuteAsync(_ =>
+        {
+            attempts++;
+
+            if (attempts == 1)
+            {
+                throw exceptionToHandle;
+            }
+
+            return Task.CompletedTask;
+        }, TestContext.Current.CancellationToken);
+
+        var arguments = Assert.Single(retryArguments);
+
+        Assert.Equal(1, arguments.AttemptNumber);
+        Assert.Equal(2, arguments.MaxRetryCount);
+        Assert.Equal(TimeSpan.FromMilliseconds(25), arguments.RetryDelay);
+        Assert.Same(exceptionToHandle, arguments.Outcome.Exception);
+        Assert.Same(NullServiceProvider.Instance, arguments.ServiceProvider);
+        Assert.Same(NullLoggerFactory.Instance, arguments.LoggerFactory);
+    }
+
+    [Fact]
+    public async Task WhenCancellationTokenIsSignaledDuringRetryDelayThenThrowsImmediately()
+    {
+        using var cancellationTokenSource = new CancellationTokenSource();
+
+        var executor = CreateExecutor(new()
+        {
+            MaxRetryCount = 3,
+            RetryDelay = TimeSpan.FromMinutes(1),
+            ShouldHandle = outcome => outcome.Exception is InvalidOperationException,
+            OnRetry = async _ => await cancellationTokenSource.CancelAsync()
+        });
+
+        var attempts = 0;
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => executor.ExecuteAsync(_ =>
+        {
+            attempts++;
+            throw new InvalidOperationException();
+        }, cancellationTokenSource.Token));
+
+        Assert.Equal(1, attempts);
+    }
+
+    [Fact]
+    public async Task WhenCancellationTokenIsSignaledThenThrowsImmediately()
+    {
+        using var cancellationTokenSource = new CancellationTokenSource();
+        await cancellationTokenSource.CancelAsync();
+
+        var retryCalled = false;
+        var executor = CreateExecutor(new()
+        {
+            MaxRetryCount = 3,
+            RetryDelay = TimeSpan.Zero,
+            ShouldHandle = _ => true,
+            OnRetry = _ =>
+            {
+                retryCalled = true;
+                return Task.CompletedTask;
+            }
+        });
+
+        var attempts = 0;
+
+        await Assert.ThrowsAsync<OperationCanceledException>(() => executor.ExecuteAsync(cancellationToken =>
+        {
+            attempts++;
+            cancellationToken.ThrowIfCancellationRequested();
+            return Task.CompletedTask;
+        }, cancellationTokenSource.Token));
+
+        Assert.Equal(1, attempts);
+        Assert.False(retryCalled);
+    }
+
+    [Fact]
+    public async Task WhenOperationSucceedsThenReturnsResult()
+    {
+        var executor = CreateExecutor(new());
+
+        var result = await executor.ExecuteAsync(_ => Task.FromResult(42), TestContext.Current.CancellationToken);
+
+        Assert.Equal(42, result);
+    }
+
+    [Fact]
+    public async Task WhenHandledExceptionIsThrownThenRetriesOperationAndReturnsResult()
+    {
+        var executor = CreateExecutor(new()
+        {
+            MaxRetryCount = 1,
+            RetryDelay = TimeSpan.Zero,
+            ShouldHandle = outcome => outcome.Exception is InvalidOperationException
+        });
+
+        var attempts = 0;
+
+        var result = await executor.ExecuteAsync(_ =>
+        {
+            attempts++;
+
+            if (attempts == 1)
+            {
+                throw new InvalidOperationException();
+            }
+
+            return Task.FromResult(42);
+        }, TestContext.Current.CancellationToken);
+
+        Assert.Equal(42, result);
+        Assert.Equal(2, attempts);
+    }
+
+    [Fact]
+    public async Task WhenHandledResultIsReturnedThenRetriesOperationAndReturnsResult()
+    {
+        var outcomes = new List<RetryOutcome>();
+
+        var executor = CreateExecutor(new()
+        {
+            MaxRetryCount = 1,
+            RetryDelay = TimeSpan.Zero,
+            ShouldHandle = outcome => outcome is { Result: HttpStatusCode.ServiceUnavailable },
+            OnRetry = arguments =>
+            {
+                outcomes.Add(arguments.Outcome);
+                return Task.CompletedTask;
+            }
+        });
+
+        var attempts = 0;
+
+        var result = await executor.ExecuteAsync(_ =>
+        {
+            attempts++;
+            return Task.FromResult(attempts == 1 ? HttpStatusCode.ServiceUnavailable : HttpStatusCode.OK);
+        }, TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.OK, result);
+        Assert.Equal(2, attempts);
+
+        var outcome = Assert.Single(outcomes);
+        Assert.Null(outcome.Exception);
+        Assert.Equal(HttpStatusCode.ServiceUnavailable, outcome.Result);
+    }
+
+    [Fact]
+    public async Task WhenHandledResultIsReturnedAndRetriesAreExhaustedThenReturnsLastResult()
+    {
+        var executor = CreateExecutor(new()
+        {
+            MaxRetryCount = 2,
+            RetryDelay = TimeSpan.Zero,
+            ShouldHandle = outcome => outcome is { Result: HttpStatusCode.ServiceUnavailable }
+        });
+
+        var attempts = 0;
+
+        var result = await executor.ExecuteAsync(_ =>
+        {
+            attempts++;
+            return Task.FromResult(HttpStatusCode.ServiceUnavailable);
+        }, TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.ServiceUnavailable, result);
+        Assert.Equal(3, attempts);
+    }
+
+    [Fact]
+    public async Task WhenUnhandledExceptionIsThrownThenDoesNotRetry()
+    {
+        var executor = CreateExecutor(new()
+        {
+            MaxRetryCount = 1,
+            RetryDelay = TimeSpan.Zero,
+            ShouldHandle = outcome => outcome.Exception is InvalidOperationException
+        });
+
+        var attempts = 0;
+
+        await Assert.ThrowsAsync<NotSupportedException>(() => executor.ExecuteAsync<int>(_ =>
+        {
+            attempts++;
+            throw new NotSupportedException();
+        }, TestContext.Current.CancellationToken));
+
+        Assert.Equal(1, attempts);
     }
 
     private static DefaultRetryExecutor CreateExecutor(RetryPolicyOptions options)
-        => new(options, Substitute.For<IServiceProvider>(), Substitute.For<ILoggerFactory>());
+        => new(options, serviceProvider: NullServiceProvider.Instance, NullLoggerFactory.Instance);
+
+    private sealed class NullServiceProvider : IServiceProvider
+    {
+        public static NullServiceProvider Instance { get; } = new();
+
+        public object? GetService(Type serviceType) => null;
+    }
 }

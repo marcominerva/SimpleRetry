@@ -1,11 +1,17 @@
 <Solution>
+  <Folder Name="/samples/">
+    <Project Path="samples/SimpleRetrySample/SimpleRetrySample.csproj" />
+  </Folder>
   <Folder Name="/Solution Items/">
     <File Path=".editorconfig" />
     <File Path="Directory.Build.props" />
     <File Path="global.json" />
     <File Path="README.md" />
   </Folder>
-  <Project Path="samples/SimpleRetrySample/SimpleRetrySample.csproj" />
-  <Project Path="src/SimpleRetry/SimpleRetry.csproj" />
-  <Project Path="tests/SimpleRetry.UnitTests/SimpleRetry.UnitTests.csproj" Id="6491e201-67a7-4673-9df6-06f9584529b4" />
+  <Folder Name="/src/">
+    <Project Path="src/SimpleRetry/SimpleRetry.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/SimpleRetry.UnitTests/SimpleRetry.UnitTests.csproj" Id="6491e201-67a7-4673-9df6-06f9584529b4" />
+  </Folder>
 </Solution>

@@ -15,7 +15,7 @@ env:
   
 jobs:
   publish:
-    name: Publish SimpleRetry on NuGet
+    name: Publish on NuGet
     runs-on: ubuntu-latest
 
     steps:
