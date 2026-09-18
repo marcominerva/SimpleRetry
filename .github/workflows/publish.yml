@@ -9,16 +9,17 @@ on:
 
 env:
   NET_VERSION: '10.x'
-  PROJECT_NAME: src/SimpleRetry
+  PROJECT_NAME: src/SimpleRetry 
   PROJECT_FILE: SimpleRetry.csproj
-  RELEASE_NAME: SimpleRetry
+  RELEASE_NAME: SimpleRetryTools
   
 jobs:
   publish:
-    name: Publish on NuGet
+    name: Publish SimpleRetry on NuGet
     runs-on: ubuntu-latest
 
     steps:
+    - name: Checkout
       uses: actions/checkout@v6
       with:
         fetch-depth: 0 # avoid shallow clone so nbgv can do its work.
@@ -37,15 +38,16 @@ jobs:
         
     - name: Package
       run: dotnet pack -c Release -o . '${{ env.PROJECT_NAME }}/${{ env.PROJECT_FILE }}'
-
+      
     - name: NuGet login (OIDC → temp API key)
       uses: NuGet/login@v1
       id: login
       with:
         user: ${{ secrets.NUGET_USER }}
-      
+
     - name: Publish on NuGet
       run: dotnet nuget push *.nupkg --api-key ${{steps.login.outputs.NUGET_API_KEY}} -s https://api.nuget.org/v3/index.json  
+      
     - name: Create release
       uses: softprops/action-gh-release@v2
       env:
